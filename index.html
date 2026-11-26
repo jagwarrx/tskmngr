@@ -130,11 +130,10 @@ const SLABEL = {inbox: 'Inbox', todo: 'To do', started: 'Started', waiting: 'Wai
 const SCOLOR = {inbox: 'default', todo: 'default', started: 'primary', waiting: 'warning', done: 'success'};
 const KIND = {deep: '#6c9fd8', shallow: '#77b38c'}, PLAN = '#e99d4a', HABIT = '#ce93d8', EVENT = '#4db6ac', ON = 'rgba(0,0,0,.87)';
 const Status = ({v}) => html`<${Chip} size="small" label=${SLABEL[v] || v} color=${SCOLOR[v] || 'default'} variant=${v === 'todo' || v === 'inbox' ? 'outlined' : 'filled'}/>`;
-const VIEWS = ['inbox', 'now', 'today', 'upcoming', 'week', 'habits', 'reminders', 'tasks', 'projects', 'logs', 'archive'];
-const NAV = [['inbox', 'Inbox', 'inbox', '#90caf9'], 0, ['now', 'Now', 'play_circle', '#F7941F'], ['today', 'Today', 'star', '#f6c343'], ['upcoming', 'Upcoming', 'date_range', '#ef8a80'],
-  ['week', 'Week', 'calendar_view_week', '#ce93d8'], 0, ['habits', 'Habits', 'local_fire_department', '#ef6c4a'], ['reminders', 'Reminders', 'notifications', '#ffb74d'], ['tasks', 'Tasks', 'checklist', '#66bb6a'],
-  ['projects', 'Projects', 'flag', '#4fc3f7'], ['logs', 'Logs', 'history', '#b0bec5'], 0, ['archive', 'Archive', 'inventory_2', '#90a4ae']];
-const hashView = () => { const h = location.hash.slice(1); return VIEWS.includes(h) ? h : 'today'; };
+const VIEWS = ['inbox', 'now', 'planning', 'calendar', 'week', 'projects', 'tasks'];
+const NAV = [['inbox', 'Inbox', 'inbox', '#90caf9'], 0, ['now', 'Now', 'play_circle', '#F7941F'], ['planning', 'Planning', 'dashboard', '#f6c343'], ['calendar', 'Calendar', 'calendar_month', '#ef8a80'],
+  ['week', 'Dashboard', 'monitoring', '#ce93d8'], 0, ['projects', 'Projects', 'flag', '#4fc3f7'], ['tasks', 'Tasks', 'checklist', '#66bb6a']];
+const hashView = () => { const h = location.hash.slice(1); return VIEWS.includes(h) ? h : 'planning'; };
 const themeMode = () => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 const makeTheme = mode => { const dark = mode === 'dark'; return createTheme({
   palette: {mode,
@@ -570,7 +569,7 @@ function Now({c}) {
   const queue = [...timed, ...top, ...open.filter(i => !i.time && !top.includes(i)), ...habs.filter(h => !timed.includes(h))];
   const fx = c.focus && byId(s, c.focus), it = run ? byId(s, run.item) : fx && (fx.type === 'habit' ? !habitDone(fx) : fx.status !== 'done') ? fx : queue[0], after = queue.filter(i => i !== it);
   if (!it) return html`<${Box}><${Head} icon="play_circle" color="#F7941F" title="Now"/>
-    <${Typography} color="text.secondary" sx=${{mb: 2}}>Nothing left on today's list.<//><${Button} variant="outlined" onClick=${() => c.go('today')}>Open Today<//><//>`;
+    <${Typography} color="text.secondary" sx=${{mb: 2}}>Nothing left on today's list.<//><${Button} variant="outlined" onClick=${() => c.go('planning')}>Open Planning<//><//>`;
   const p = it.project && byId(s, it.project), m = it.milestone && byId(s, it.milestone);
   const el = run ? elapsed(run, now) : 0, left = run && run.planned ? run.planned * 60000 - el : 0;
   const tb = s.blocks.filter(b => b.item === it.id), tbm = tb.reduce((n, b) => n + b.min, 0);
@@ -982,7 +981,7 @@ function Week({c}) {
     <${Stack} direction="row" alignItems="center" spacing=${.75} sx=${{color: 'text.secondary'}}>${I(icon, {fontSize: 18, color: col})}<${Typography} variant="body2">${l}<//><//>
     <${Typography} sx=${{fontSize: 28, fontWeight: 500, mt: .5, color: col}}>${v}<//><//>`;
   return html`<${Box}>
-    <${Head} icon="calendar_view_week" color="#ce93d8" title="Week"/>
+    <${Head} icon="monitoring" color="#ce93d8" title="Dashboard"/>
     <${Stack} direction="row" alignItems="center" sx=${{mb: 1.5}}>
       <${IconButton} color="primary" aria-label="Previous week" onClick=${() => setOff(off - 1)}>${I('chevron_left')}<//>
       <${Typography} color="primary" sx=${{fontSize: 20, px: .5}}>${a.getDate() + (a.getMonth() !== z.getMonth() ? ' ' + MON[a.getMonth()] : '') + ' to ' + z.getDate() + ' ' + MON[z.getMonth()] + ' ' + z.getFullYear()}<//>
@@ -1274,70 +1273,226 @@ function Kanban({c}) {
     addLabel="New project" onAdd=${(n, st) => c.add({type: 'project', name: n, status: st})}/>`;
 }
 
-function Projects({c}) {
-  const note = html`<${Box} sx=${{position: 'sticky', bottom: 0, mt: 4, py: 1.5, bgcolor: 'background.default', borderTop: 1, borderColor: 'divider', zIndex: 2}}>
-    <${Typography} variant="body2" color="text.secondary" sx=${{fontStyle: 'italic'}}>Manage objectives in Obsidian, not here.<//><//>`;
-  const [mode, setModeS] = useState(() => localStorage.getItem('one-table-pmode') || 'lines'), ps = projects(c.s);
-  const setMode = v => { setModeS(v); localStorage.setItem('one-table-pmode', v); };
-  const [pd, setPd] = useState(null), [po, setPo] = useState(null);
-  const half = e => { const r = e.currentTarget.getBoundingClientRect(); return e.clientY > r.top + r.height / 2 ? 'after' : 'before'; };
-  const dropP = (p, k, where) => { if (!pd || pd === p.id) return; const nx = ps[k + 1];
-    c.move(pd, where === 'before' ? p.id : nx ? (nx.id === pd ? (ps[k + 2] || {}).id || null : nx.id) : null); };
-  const mp = c.mapId && byId(c.s, c.mapId);
-  if (mp && mp.type === 'project') return html`<${Box}>
-    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
-      <${Button} startIcon=${I('arrow_back')} onClick=${() => c.mindMap(null)}>Projects<//>
-      <${Box} sx=${{flex: 1}}/>
-      <${Select} size="small" value=${mp.id} onChange=${e => c.mindMap(e.target.value)} sx=${{minWidth: 220}} inputProps=${{'aria-label': 'Project'}}>
-        ${ps.map(p => html`<${MenuItem} key=${p.id} value=${p.id}>${p.name}<//>`)}<//>
-    <//>
-    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
-      <${Box} sx=${{color: '#4fc3f7', display: 'flex'}}>${I('account_tree', {fontSize: 30})}<//>
-      <${Typography} variant="h4" component="h1" noWrap sx=${{flex: 1, minWidth: 0}}>${mp.name}<//>
-      <${Status} v=${mp.status}/>
-    <//>
-    <${Typography} color="text.secondary" onClick=${() => c.open(mp.id)} sx=${{mb: 2.5, mt: -1, cursor: 'pointer'}}>${mp.doneWhen ? 'Goal: ' + mp.doneWhen : 'No goal'}<//>
-    <${MindMap} c=${c} p=${mp}/>
-    ${note}
+/* planning, projects and calendar: shared pieces */
+const useLS = (k, d) => { const [v, sv] = useState(() => localStorage.getItem(k) || d); return [v, x => { sv(x); localStorage.setItem(k, x); }]; };
+const wkEnd = () => iso(addDays(weekStart(new Date()), 6));
+const bucket = t => { if (t.type !== 'task' || t.status === 'inbox') return null; const we = wkEnd();
+  if (t.when && t.when <= TODAY) return 'today'; if (t.when && t.when <= we || t.plan === 'week') return 'week'; if (t.when || t.plan === 'later') return 'later'; return null; };
+const BLABEL = {today: 'Today', week: 'This week', later: 'Later'};
+const doneToday = t => t.doneAt && iso(new Date(t.doneAt)) === TODAY;
+const showT = t => t.status !== 'done' || doneToday(t);
+const byOpen = (a, b) => (a.status === 'done') - (b.status === 'done') || ((a.when || '9') + (a.time || '99')).localeCompare((b.when || '9') + (b.time || '99'));
+const tKind = (s, t) => t.kind || (s.blocks.filter(b => b.item === t.id).slice(-1)[0] || {}).kind || null;
+const toBucket = (c, id, b) => { const t = byId(c.all, id); if (!t || t.type !== 'task') return; const we = wkEnd();
+  c.upd(id, x => ({status: x.status === 'inbox' ? 'todo' : x.status, ...(b === 'today' ? {when: TODAY, time: x.when === TODAY ? x.time : null, plan: null}
+    : b === 'week' ? (x.when && x.when > TODAY && x.when <= we ? {plan: 'week'} : {plan: 'week', when: null, time: null}) : {plan: 'later', when: null, time: null})})); };
+const toProj = (c, id, pid, src) => { const t = byId(c.all, id); if (!t || t.type !== 'task') return;
+  c.upd(id, x => ({project: pid, milestone: pid && pid === x.project ? x.milestone : null, status: x.status === 'inbox' ? 'todo' : x.status, ...(src === 'bucket' ? {plan: null, when: null, time: null} : {})})); };
+const CROSS = col => 'linear-gradient(45deg, transparent calc(50% - 1px), ' + col + ' calc(50% - 1px), ' + col + ' calc(50% + 1px), transparent calc(50% + 1px)), linear-gradient(-45deg, transparent calc(50% - 1px), ' + col + ' calc(50% - 1px), ' + col + ' calc(50% + 1px), transparent calc(50% + 1px))';
+
+/* one task (or habit) as a small square: colour = deep or shallow, cross = done, dots = blocks done on it */
+function Sq({c, t, src, tag, hab}) {
+  const s = c.all, dn = hab ? habitDone(t) : t.status === 'done', k = hab ? null : tKind(s, t), col = hab ? HABIT : k ? KIND[k] : null;
+  const bl = hab ? [] : s.blocks.filter(b => b.item === t.id), st = hab ? streak(t) : 0;
+  return html`<${Box} draggable=${hab ? 'false' : 'true'} onDragStart=${e => { e.dataTransfer.setData('text/plain', t.id); e.dataTransfer.setData('application/x-tsk-src', src || ''); e.dataTransfer.effectAllowed = 'move'; }}
+      onClick=${() => c.open(t.id)} sx=${{display: 'flex', alignItems: 'center', gap: .75, px: 1, py: .4, borderRadius: 1, cursor: 'pointer', '&:hover': {bgcolor: 'action.hover'}}}>
+    <${Tooltip} title=${(k ? (k === 'deep' ? 'Deep' : 'Shallow') + ' work, ' : '') + (dn ? 'done' : 'not done')}><${Box} component="button" aria-label=${(dn ? 'Not done: ' : 'Done: ') + t.name} aria-pressed=${dn}
+      onPointerDown=${e => e.stopPropagation()} onClick=${e => { e.stopPropagation(); hab ? markHabit(c, t) : c.toggle(t); }}
+      sx=${{flex: 'none', width: 15, height: 15, p: 0, border: '1.5px solid', borderColor: col || 'text.secondary', borderRadius: '2px', cursor: 'pointer',
+        bgcolor: col || 'transparent', opacity: dn ? .6 : 1, backgroundImage: dn ? CROSS(col ? 'rgba(0,0,0,.85)' : 'currentColor') : 'none', color: 'text.primary'}}/><//>
+    <${Typography} noWrap sx=${{flex: 1, minWidth: 0, fontSize: 13.5, lineHeight: '20px', color: dn ? 'text.disabled' : 'text.primary'}}>${t.name}<//>
+    ${t.repeat && !hab ? html`<${Tooltip} title=${'Repeats ' + t.repeat}>${I('repeat', {fontSize: 15, color: 'text.secondary', flex: 'none'})}<//>` : null}
+    ${bl.length ? html`<${Tooltip} title=${bl.length + (bl.length > 1 ? ' blocks, ' : ' block, ') + dur(bl.reduce((n, b) => n + b.min, 0))}><${Stack} direction="row" alignItems="center" spacing=${.3} sx=${{flex: 'none'}}>
+      ${bl.slice(-5).map(b => html`<${Box} key=${bid(b)} sx=${{width: 8, height: 8, borderRadius: '50%', bgcolor: KIND[b.kind] || '#9e9e9e'}}/>`)}
+      ${bl.length > 5 ? html`<${Typography} sx=${{fontSize: 11, color: 'text.secondary'}}>+${bl.length - 5}<//>` : null}<//><//>` : null}
+    ${hab && st ? html`<${Stack} direction="row" alignItems="center" sx=${{flex: 'none', color: 'dojo.main'}}>${I('local_fire_department', {fontSize: 15})}<${Typography} sx=${{fontSize: 12.5, fontWeight: 600}}>${st}<//><//>` : null}
+    ${tag ? html`<${Box} sx=${{flex: 'none', fontSize: 11, lineHeight: '18px', px: .6, borderRadius: 1, bgcolor: 'action.selected', color: 'text.secondary', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>${tag}<//>` : null}
   <//>`;
-  const newP = () => { const id = c.add({type: 'project', name: 'New project', status: 'todo'}); c.open(id); };
+}
+
+/* the circle in front of a project: filled = active */
+function ActDot({c, p, size = 20}) {
+  return html`<${Tooltip} title=${p.active ? 'Active' : 'Make active'}><${Box} component="button" aria-label=${(p.active ? 'Active: ' : 'Make active: ') + p.name} aria-pressed=${!!p.active}
+    onPointerDown=${e => e.stopPropagation()} onClick=${e => { e.stopPropagation(); c.upd(p.id, x => ({active: !x.active})); }}
+    sx=${{flex: 'none', width: size, height: size, p: 0, borderRadius: '50%', border: '2px solid', borderColor: p.active ? '#4fc3f7' : 'text.disabled', bgcolor: p.active ? '#4fc3f7' : 'transparent',
+      cursor: 'pointer', display: 'grid', placeItems: 'center', color: ON, '&:hover': {borderColor: '#4fc3f7'}}}>${p.active ? I('check', {fontSize: size - 6}) : null}<//><//>`;
+}
+
+/* a pannable, zoomable board of rectangles; positions are saved in state.layout */
+function Canvas({c, lkey, frames, h}) {
+  const box = React.useRef(null), moved = React.useRef(false), [z, setZ] = useLS('tsk-zoom-' + lkey, '1'), zm = +z;
+  const [mv, setMv] = useState(null), [over, setOver] = useState(null);
+  const L = c.all.layout || {}, pos = f => mv && mv.id === f.id ? mv : L[lkey + f.id] || f.at;
+  const W = Math.max(...frames.map(f => pos(f).x + (f.w || 300)), 600) + 900, Hh = Math.max(...frames.map(f => pos(f).y), 0) + 1100;
+  useEffect(() => { const el = box.current; if (!el) return;
+    const wh = e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); setZ(String(Math.max(.4, Math.min(1.5, Math.round((zm - e.deltaY * .002) * 100) / 100)))); };
+    el.addEventListener('wheel', wh, {passive: false}); return () => el.removeEventListener('wheel', wh); }, [zm]);
+  const grab = (ev, f) => { if (ev.button !== 0 || ev.target.closest('button,input,textarea')) return; ev.preventDefault(); moved.current = false;
+    const p0 = pos(f), sx = ev.clientX, sy = ev.clientY; let last = null;
+    const move = e => { if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) < 4 && !last) return; moved.current = true;
+      last = {id: f.id, x: Math.max(0, Math.round((p0.x + (e.clientX - sx) / zm) / 10) * 10), y: Math.max(0, Math.round((p0.y + (e.clientY - sy) / zm) / 10) * 10)}; setMv(last); };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); setMv(null);
+      if (last) c.set(x => ({...x, layout: {...(x.layout || {}), [lkey + f.id]: {x: last.x, y: last.y}}})); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); };
+  const pan = ev => { if (ev.target !== ev.currentTarget || ev.button !== 0) return; const el = box.current, sx = ev.clientX, sy = ev.clientY, l0 = el.scrollLeft, t0 = el.scrollTop;
+    el.style.cursor = 'grabbing';
+    const move = e => { el.scrollLeft = l0 - (e.clientX - sx); el.scrollTop = t0 - (e.clientY - sy); };
+    const up = () => { el.style.cursor = ''; removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); };
+  const zb = (icon, label, v) => html`<${Tooltip} title=${label}><${IconButton} size="small" aria-label=${label} onClick=${() => setZ(String(v))}>${I(icon, {fontSize: 18})}<//><//>`;
+  return html`<${Box} sx=${{position: 'relative'}}>
+    <${Box} ref=${box} sx=${{height: h, overflow: 'auto', borderRadius: 1, border: 1, borderColor: 'divider', cursor: 'grab', bgcolor: 'action.hover'}}>
+      <${Box} onPointerDown=${pan} sx=${{position: 'relative', width: W, height: Hh, zoom: zm, backgroundImage: 'radial-gradient(rgba(128,128,128,.35) 1px, transparent 1px)', backgroundSize: '20px 20px'}}>
+        ${frames.map(f => { const p = pos(f), dragging = mv && mv.id === f.id;
+          return html`<${Paper} key=${f.id} elevation=${dragging ? 10 : 2}
+            onDragOver=${f.drop ? e => { e.preventDefault(); if (over !== f.id) setOver(f.id); } : null} onDragLeave=${e => !e.currentTarget.contains(e.relatedTarget) && setOver(null)}
+            onDrop=${f.drop ? e => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData('text/plain'); if (id) f.drop(id, e.dataTransfer.getData('application/x-tsk-src')); } : null}
+            sx=${{position: 'absolute', left: p.x, top: p.y, width: f.w || 300, maxHeight: f.mh || 380, display: 'flex', flexDirection: 'column', cursor: 'default', zIndex: dragging ? 5 : 1,
+              borderTop: '4px solid ' + f.color, outline: over === f.id ? '2px dashed' : 'none', outlineColor: 'primary.main', outlineOffset: 2}}>
+            <${Stack} direction="row" alignItems="center" spacing=${1} onPointerDown=${ev => grab(ev, f)} onClick=${() => !moved.current && f.open && f.open()}
+              sx=${{px: 1.25, py: .9, cursor: 'move', borderBottom: 1, borderColor: 'divider', userSelect: 'none', minHeight: 42}}>${f.head}<//>
+            <${Box} sx=${{overflowY: 'auto', flex: 1, py: .5, minHeight: 28}}>${f.body}<//>
+            ${f.foot || null}
+          <//>`; })}
+      <//>
+    <//>
+    <${Paper} elevation=${3} sx=${{position: 'absolute', right: 14, bottom: 14, display: 'flex', alignItems: 'center', px: .5, borderRadius: 5}}>
+      ${zb('remove', 'Zoom out', Math.max(.4, Math.round((zm - .1) * 10) / 10))}
+      <${ButtonBase} onClick=${() => setZ('1')} sx=${{fontSize: 12.5, minWidth: 44, height: 30, borderRadius: 1, color: 'text.secondary'}}>${Math.round(zm * 100)}%<//>
+      ${zb('add', 'Zoom in', Math.min(1.5, Math.round((zm + .1) * 10) / 10))}
+    <//>
+  <//>`;
+}
+const fhead = (icon, color, title, n) => html`${I(icon, {color, fontSize: 20})}<${Typography} fontWeight="700" noWrap sx=${{flex: 1, minWidth: 0}}>${title}<//>
+  ${n ? html`<${Typography} variant="body2" color="text.secondary">${n}<//>` : null}`;
+const phead = (c, p) => { const t = tasksOf(c.s, p.id); return html`<${ActDot} c=${c} p=${p}/><${Typography} fontWeight="700" noWrap sx=${{flex: 1, minWidth: 0}}>${p.name}<//>
+  <${Typography} variant="body2" color="text.secondary" sx=${{whiteSpace: 'nowrap'}}>${t.filter(x => x.status === 'done').length} of ${t.length}<//>`; };
+const quick = (label, onAdd) => html`<${Box} sx=${{borderTop: 1, borderColor: 'divider', py: .25}}><${Quick} label=${label} onAdd=${onAdd}/><//>`;
+const empty = html`<${Box} sx=${{height: 8}}/>`;
+
+function Planning({c}) {
+  const s = c.s, tasks = s.items.filter(i => i.type === 'task' && i.status !== 'inbox');
+  const ps = projects(s).filter(p => p.status !== 'done'), act = ps.filter(p => p.active), later = ps.filter(p => !p.active);
+  const tagP = t => { const p = t.project && byId(s, t.project); return p ? p.name : ''; };
+  const list = (xs, src, tag) => xs.length ? xs.map(t => html`<${Sq} key=${t.id} c=${c} t=${t} src=${src} tag=${tag(t)}/>`) : empty;
+  const top = ['today', 'week', 'later'].map((b, k) => { const xs = tasks.filter(t => bucket(t) === b && showT(t)).sort(byOpen);
+    return {id: b, at: {x: k * 420, y: 0}, w: 400, mh: 400, color: {today: '#f6c343', week: '#ef8a80', later: '#90a4ae'}[b],
+      head: fhead({today: 'star', week: 'date_range', later: 'schedule'}[b], {today: '#f6c343', week: '#ef8a80', later: '#90a4ae'}[b], BLABEL[b], xs.filter(t => t.status !== 'done').length || ''),
+      body: list(xs, 'bucket', tagP), drop: id => toBucket(c, id, b),
+      foot: quick('Add to ' + BLABEL[b].toLowerCase(), n => c.add({type: 'task', name: n, status: 'todo', ...(b === 'today' ? {when: TODAY} : {plan: b})}))}; });
+  const tagB = t => BLABEL[bucket(t)] || '';
+  const projF = act.map(p => ({id: p.id, color: '#4fc3f7', head: phead(c, p), open: () => c.open(p.id),
+    body: list(tasksOf(s, p.id).filter(t => t.status !== 'done' || doneToday(t) || t.doneAt > Date.now() - 7 * 864e5).sort(byOpen), 'proj', tagB), drop: (id, src) => toProj(c, id, p.id, src),
+    foot: quick('Add a task', n => c.add({type: 'task', name: n, status: 'todo', project: p.id}))}));
+  const misc = {id: 'misc', color: '#b0bec5', head: fhead('inventory_2', '#b0bec5', 'Misc tasks', ''),
+    body: list(tasks.filter(t => !t.project && showT(t)).sort(byOpen), 'proj', tagB), drop: (id, src) => toProj(c, id, null, src),
+    foot: quick('Add a task', n => c.add({type: 'task', name: n, status: 'todo'}))};
+  const habs = s.items.filter(i => i.type === 'habit');
+  const hab = {id: 'habits', color: HABIT, head: fhead('local_fire_department', HABIT, 'Habits', habs.filter(h => !habitDone(h)).length || ''),
+    body: habs.length ? habs.map(h => html`<${Sq} key=${h.id} c=${c} t=${h} hab=${true}/>`) : empty,
+    foot: quick('Add a habit', n => c.add({type: 'habit', name: n, status: 'todo', repeat: 'daily', log: []}))};
+  const up = {id: 'upcoming', color: '#90a4ae', head: fhead('flag', '#90a4ae', 'Upcoming projects', later.length || ''),
+    body: html`<${Stack} spacing=${.75} sx=${{p: 1}}>${later.map(p => { const t = tasksOf(s, p.id);
+      return html`<${Box} key=${p.id} onClick=${() => c.open(p.id)} sx=${{display: 'flex', alignItems: 'center', gap: 1, px: 1.25, py: 1, border: '1.5px solid', borderColor: 'divider', borderRadius: 1, cursor: 'pointer', '&:hover': {borderColor: '#4fc3f7'}}}>
+        <${ActDot} c=${c} p=${p} size=${18}/><${Typography} variant="body2" fontWeight="600" noWrap sx=${{flex: 1, minWidth: 0}}>${p.name}<//>
+        <${Typography} variant="caption" color="text.secondary">${t.length}${tasksN(t.length)}<//><//>`; })}${later.length ? null : empty}<//>`,
+    foot: quick('Add a project', n => c.add({type: 'project', name: n, status: 'todo'}))};
+  const bottom = [...projF, misc, hab, up].map((f, k) => ({...f, at: {x: (k % 4) * 315, y: 400 + Math.floor(k / 4) * 420}, w: 300}));
   return html`<${Box}>
-    <${Head} icon="flag" color="#4fc3f7" title="Projects"
-      action=${html`<${Button} variant="contained" startIcon=${I('add')} onClick=${newP}>New project<//>`}/>
-    <${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && setMode(v)} sx=${{mb: 2}}>
-      <${ToggleButton} value="lines">${I('timeline', {fontSize: 18, mr: .75})}Milestones<//><${ToggleButton} value="kanban">${I('view_kanban', {fontSize: 18, mr: .75})}Kanban<//>
-      <${ToggleButton} value="table">${I('table_rows', {fontSize: 18, mr: .75})}Table<//><//>
-    ${mode === 'kanban' ? html`<${Kanban} c=${c}/>` : mode === 'lines' ? html`      <${Stack} spacing=${2}>${ps.map((p, k) => { const t = tasksOf(c.s, p.id), ov = po && po.id === p.id && pd && pd !== p.id ? po.where : null;
-        return html`<${Card} key=${p.id} elevation=${1} draggable onDragStart=${e => { e.dataTransfer.setData('text/plain', p.id); e.dataTransfer.effectAllowed = 'move'; setPd(p.id); }}
-            onDragEnd=${() => { setPd(null); setPo(null); }} onDragOver=${e => { if (!pd) return; e.preventDefault(); const w = half(e); if (!po || po.id !== p.id || po.where !== w) setPo({id: p.id, where: w}); }}
-            onDrop=${e => { e.preventDefault(); dropP(p, k, half(e)); setPd(null); setPo(null); }}
-            sx=${{p: {xs: 2, md: 2.5}, position: 'relative', overflow: 'visible', opacity: pd === p.id ? .4 : 1}}>
-          ${ov ? html`<${Box} sx=${{position: 'absolute', left: 0, right: 0, [ov === 'before' ? 'top' : 'bottom']: -10, height: 3, borderRadius: 2, bgcolor: 'primary.main'}}/>` : null}
-          <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2.5, cursor: 'pointer'}} onClick=${() => c.open(p.id)}>
-            <${Tooltip} title="Drag to reorder"><${Box} onClick=${e => e.stopPropagation()} sx=${{display: 'flex', color: 'text.disabled', cursor: 'grab', ml: -1, mr: -.75}}>${I('drag_indicator', {fontSize: 22})}<//><//>
-            <${Box} sx=${{width: 30, height: 30, flexShrink: 0, borderRadius: '50%', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 15,
-              bgcolor: k < 3 ? 'dojo.main' : 'action.selected', color: k < 3 ? 'dojo.contrastText' : 'text.secondary'}}>${k + 1}<//>
-            <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} variant="h6" fontWeight="700" noWrap>${p.name}<//>
-              <${Typography} variant="body2" color="text.secondary" noWrap>${p.doneWhen ? 'Goal: ' + p.doneWhen : 'No goal'}<//>
-              <${Typography} variant="body2" color="text.secondary" noWrap>${p.startDate ? 'Starts ' + fmtDay(p.startDate) : 'No start date'}<//><//>
-            <${Typography} variant="body2" color="text.secondary" sx=${{whiteSpace: 'nowrap', display: {xs: 'none', sm: 'block'}}}>${t.filter(x => x.status === 'done').length} of ${t.length}${tasksN(t.length)}<//>
-            <${Status} v=${p.status}/>
-            <${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }}>${I('account_tree', {fontSize: 20})}<//><//>
-          <//>
-          <${Line} c=${c} p=${p}/>
-          ${habitsOf(c.s, p.id).length ? html`<${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1, mt: 2}} useFlexGap>${habitsOf(c.s, p.id).map(h => html`<${Chip} key=${h.id}
-            icon=${I(habitDone(h) ? 'check_circle' : 'local_fire_department', {fontSize: 18})} label=${h.name + (streak(h) ? ', ' + streak(h) + ' in a row' : '')}
-            color=${habitDone(h) ? 'success' : 'default'} variant=${habitDone(h) ? 'filled' : 'outlined'} onClick=${() => c.open(h.id)}/>`)}<//>` : null}
-        <//>`; })}<//>`
-    : html`<${TableContainer} component=${Paper} elevation=${1}><${Table} size="small">
-        <${TableHead}><${TableRow}><${TableCell}>Project<//><${TableCell}>Status<//><${TableCell} align="right">Done<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>Starts<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>Due<//><${TableCell}/><//><//>
-        <${TableBody}>${ps.map(p => { const t = tasksOf(c.s, p.id); return html`<${TableRow} key=${p.id} hover sx=${{cursor: 'pointer'}} onClick=${() => c.open(p.id)}>
-          <${TableCell}><${Typography} variant="body2" fontWeight="600">${p.name}<//><//><${TableCell}><${Status} v=${p.status}/><//>
-          <${TableCell} align="right" sx=${{whiteSpace: 'nowrap'}}>${t.filter(x => x.status === 'done').length} of ${t.length}<//>
-          <${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>${fmtDay(p.startDate)}<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}, whiteSpace: 'nowrap'}}>${fmtDay(p.due)}<//>
-          <${TableCell} padding="checkbox"><${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }}>${I('account_tree', {fontSize: 20})}<//><//><//><//>`; })}<//>
-      <//><//>`}
-    ${note}
+    <${Head} icon="dashboard" color="#f6c343" title="Planning"/>
+    <${Canvas} c=${c} lkey="plan:" frames=${[...top, ...bottom]} h="calc(100vh - 200px)"/>
+  <//>`;
+}
+
+function ProjMap({c, act, later}) {
+  const [exp, setExp] = useState({}), isExp = p => exp[p.id] != null ? exp[p.id] : !!p.active;
+  const RH = 32, X = [0, 150, 310, 640], WD = [120, 130, 300, 300], nodes = [], links = [];
+  let y = 0; const gys = [];
+  [['Active', act, '#4fc3f7'], ['Later', later, '#90a4ae']].forEach(([g, list, col]) => { const g0 = y, pys = [];
+    list.forEach(p => { const ts = isExp(p) ? tasksOf(c.s, p.id).filter(t => t.status !== 'done').sort(byOpen) : [], p0 = y;
+      if (ts.length) ts.forEach(t => { nodes.push({k: 't', t, x: X[3], y}); y += RH; }); else y += RH;
+      const py = (p0 + y - RH) / 2; nodes.push({k: 'p', p, x: X[2], y: py}); pys.push(py);
+      nodes.filter(n => n.k === 't' && n.y >= p0 && n.y < y).forEach(n => links.push([X[2] + WD[2], py, X[3], n.y])); y += 10; });
+    if (!list.length) y += RH;
+    const gy = list.length ? (pys[0] + pys[pys.length - 1]) / 2 : g0; nodes.push({k: 'g', g, col, n: list.length, x: X[1], y: gy}); gys.push(gy);
+    pys.forEach(py => links.push([X[1] + WD[1], gy, X[2], py])); y += 26; });
+  const ry = (gys[0] + gys[1]) / 2; gys.forEach(gy => links.push([X[0] + WD[0], ry, X[1], gy]));
+  const cy = v => v + RH / 2, path = ([x1, y1, x2, y2]) => 'M' + x1 + ' ' + cy(y1) + ' C' + (x1 + x2) / 2 + ' ' + cy(y1) + ' ' + (x1 + x2) / 2 + ' ' + cy(y2) + ' ' + x2 + ' ' + cy(y2);
+  const pill = (sx, kids) => html`<${Box} sx=${{position: 'absolute', height: RH - 4, mt: '2px', display: 'flex', alignItems: 'center', gap: .75, px: 1.25, borderRadius: 4, ...sx}}>${kids}<//>`;
+  return html`<${Paper} elevation=${1} sx=${{p: 3, overflow: 'auto'}}>
+    <${Box} sx=${{position: 'relative', width: X[3] + WD[3], height: y}}>
+      <svg width=${X[3] + WD[3]} height=${y} style=${{position: 'absolute', inset: 0, overflow: 'visible'}}>
+        ${links.map((l, k) => html`<path key=${k} d=${path(l)} fill="none" stroke="rgba(128,128,128,.5)" stroke-width="1.5"/>`)}
+      </svg>
+      ${pill({left: X[0], top: ry, width: WD[0], bgcolor: 'text.primary', color: 'background.default', fontWeight: 700, justifyContent: 'center'}, 'Projects')}
+      ${nodes.map((n, k) => n.k === 'g' ? html`<${React.Fragment} key=${'g' + k}>${pill({left: n.x, top: n.y, width: WD[1], bgcolor: n.col, color: ON, fontWeight: 700, justifyContent: 'center'}, n.g + ' ' + n.n)}<//>`
+        : n.k === 'p' ? html`<${React.Fragment} key=${n.p.id}>${pill({left: n.x, top: n.y, width: WD[2], border: '1.5px solid', borderColor: n.p.active ? '#4fc3f7' : 'divider', bgcolor: 'background.paper'},
+            html`<${ActDot} c=${c} p=${n.p} size=${16}/><${Typography} variant="body2" fontWeight="600" noWrap onClick=${() => c.open(n.p.id)} sx=${{flex: 1, minWidth: 0, cursor: 'pointer'}}>${n.p.name}<//>
+              <${IconButton} size="small" aria-label=${(isExp(n.p) ? 'Hide tasks of ' : 'Show tasks of ') + n.p.name} onClick=${() => setExp({...exp, [n.p.id]: !isExp(n.p)})} sx=${{p: .25, mr: -.75}}>
+                ${I(isExp(n.p) ? 'chevron_left' : 'chevron_right', {fontSize: 18})}<//>`)}<//>`
+        : html`<${Box} key=${n.t.id} sx=${{position: 'absolute', left: n.x, top: n.y + 2, width: WD[3]}}><${Sq} c=${c} t=${n.t} src="proj"/><//>`)}
+    <//>
+  <//>`;
+}
+
+function Projects({c}) {
+  const mode = c.pm, ps = projects(c.s), act = ps.filter(p => p.active && p.status !== 'done'), later = ps.filter(p => !p.active && p.status !== 'done'), done = ps.filter(p => p.status === 'done');
+  const [openP, setOpenP] = useState({}), [showDone, setShowDone] = useState(false), isOpen = p => openP[p.id] != null ? openP[p.id] : !!p.active;
+  const newP = () => { const id = c.add({type: 'project', name: '', status: 'todo', fresh: true}); c.open(id); };
+  const prow = p => { const t = tasksOf(c.s, p.id), o = isOpen(p), ms = milestones(c.s, p.id);
+    return html`<${Box} key=${p.id} sx=${{mb: .5}}>
+      <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{py: .5, pr: 1, borderRadius: 1, '&:hover': {bgcolor: 'action.hover'}}}>
+        <${IconButton} size="small" aria-label=${(o ? 'Fold ' : 'Unfold ') + p.name} onClick=${() => setOpenP({...openP, [p.id]: !o})}>${I(o ? 'expand_more' : 'chevron_right', {fontSize: 20})}<//>
+        <${ActDot} c=${c} p=${p}/>
+        <${Typography} fontWeight="600" noWrap onClick=${() => c.open(p.id)} sx=${{flex: 1, minWidth: 0, cursor: 'pointer', textDecoration: p.status === 'done' ? 'line-through' : 'none'}}>${p.name}<//>
+        <${Typography} variant="body2" color="text.secondary" sx=${{whiteSpace: 'nowrap'}}>${t.filter(x => x.status === 'done').length} of ${t.length}<//>
+      <//>
+      ${o ? html`<${Box} sx=${{pl: {xs: 3, sm: 7}, pr: 1, pb: 1}}>
+        ${ms.map(m => html`<${Box} key=${m.id}><${Stack} direction="row" alignItems="center" spacing=${.75} onClick=${() => c.open(m.id)} sx=${{pl: 1, pt: .75, pb: .25, cursor: 'pointer', color: 'text.secondary'}}>
+            ${I(msDone(c.s, m) ? 'check_circle' : 'flag', {fontSize: 16})}<${Typography} variant="body2" fontWeight="600">${m.name}<//><//>
+          <${Box} sx=${{pl: 2}}>${msTasks(c.s, m.id).sort(byOpen).map(x => html`<${Sq} key=${x.id} c=${c} t=${x} src="proj" tag=${BLABEL[bucket(x)] || ''}/>`)}<//><//>`)}
+        ${t.filter(x => !x.milestone).sort(byOpen).map(x => html`<${Sq} key=${x.id} c=${c} t=${x} src="proj" tag=${BLABEL[bucket(x)] || ''}/>`)}
+        <${Quick} label=${'Add a task to ' + p.name} onAdd=${n => c.add({type: 'task', name: n, status: 'todo', project: p.id})}/>
+      <//>` : null}
+    <//>`; };
+  const group = (title, list, col) => html`<${Box} sx=${{mb: 3}}>
+    <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{mb: 1}}><${Box} sx=${{width: 10, height: 10, borderRadius: '50%', bgcolor: col}}/>
+      <${Typography} sx=${{fontSize: 18, fontWeight: 700}}>${title}<//><${Typography} color="text.secondary">${list.length}<//><//>
+    <${Paper} elevation=${1} sx=${{p: .5}}>${list.length ? list.map(prow) : html`<${Box} sx=${{height: 12}}/>`}<//><//>`;
+  const frames = [...act, ...later].map((p, k) => ({id: p.id, at: {x: (k % 4) * 315, y: Math.floor(k / 4) * 420}, w: 300, color: p.active ? '#4fc3f7' : '#90a4ae', head: phead(c, p), open: () => c.open(p.id),
+    body: (() => { const ts = tasksOf(c.s, p.id).sort(byOpen); return ts.length ? ts.map(t => html`<${Sq} key=${t.id} c=${c} t=${t} src="proj" tag=${BLABEL[bucket(t)] || ''}/>`) : empty; })(),
+    drop: (id, src) => toProj(c, id, p.id, src), foot: quick('Add a task', n => c.add({type: 'task', name: n, status: 'todo', project: p.id}))}));
+  return html`<${Box}>
+    <${Head} icon="flag" color="#4fc3f7" title="Projects" action=${html`<${Button} variant="contained" startIcon=${I('add')} onClick=${newP}>New project<//>`}/>
+    <${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && c.setPm(v)} sx=${{mb: 2}}>
+      <${ToggleButton} value="outline">${I('format_list_bulleted', {fontSize: 18, mr: .75})}Outline<//>
+      <${ToggleButton} value="canvas">${I('dashboard', {fontSize: 18, mr: .75})}Canvas<//>
+      <${ToggleButton} value="map">${I('account_tree', {fontSize: 18, mr: .75})}Mind map<//><//>
+    ${mode === 'canvas' ? html`<${Canvas} c=${c} lkey="proj:" frames=${frames} h="calc(100vh - 250px)"/>`
+      : mode === 'map' ? html`<${ProjMap} c=${c} act=${act} later=${later}/>`
+      : html`${group('Active', act, '#4fc3f7')}${group('Later', later, '#90a4ae')}
+        ${done.length ? html`<${Box}><${Stack} direction="row" alignItems="center" spacing=${1} onClick=${() => setShowDone(!showDone)} sx=${{cursor: 'pointer', mb: 1, userSelect: 'none'}}>
+          ${I(showDone ? 'expand_more' : 'chevron_right', {color: 'text.secondary'})}<${Typography} sx=${{fontSize: 18, fontWeight: 700}}>Done<//><${Typography} color="text.secondary">${done.length}<//><//>
+          ${showDone ? html`<${Paper} elevation=${1} sx=${{p: .5}}>${done.map(prow)}<//>` : null}<//>` : null}`}
+  <//>`;
+}
+
+function Calendar({c}) {
+  const [mode, setMode] = useLS('tsk-cmode', 'week'), [off, setOff] = useState(0), wk = mode === 'week';
+  const days = wk ? [...Array(7)].map((_, k) => iso(addDays(addDays(weekStart(new Date()), off * 7), k))) : [day(off)];
+  const a = parse(days[0]), z = parse(days[days.length - 1]);
+  const label = wk ? a.getDate() + (a.getMonth() !== z.getMonth() ? ' ' + MON[a.getMonth()] : '') + ' to ' + z.getDate() + ' ' + MON[z.getMonth()] + ' ' + z.getFullYear() : fmtDay(days[0]) + (days[0] === TODAY || Math.abs(off) <= 1 ? ', ' + DOW_LONG[a.getDay()] + ' ' + a.getDate() + ' ' + MON[a.getMonth()] : '');
+  return html`<${Box}>
+    <${Head} icon="calendar_month" color="#ef8a80" title="Calendar" action=${html`<${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => { if (v) { setMode(v); setOff(0); } }}>
+      <${ToggleButton} value="day">Day<//><${ToggleButton} value="week">Week<//><//>`}/>
+    <${Stack} direction="row" alignItems="center" sx=${{mb: 1.5}}>
+      <${IconButton} color="primary" aria-label=${wk ? 'Previous week' : 'Previous day'} onClick=${() => setOff(off - 1)}>${I('chevron_left')}<//>
+      <${Typography} color="primary" noWrap sx=${{fontSize: {xs: 16, sm: 20}, px: .5}}>${label}<//>
+      <${IconButton} color="primary" aria-label=${wk ? 'Next week' : 'Next day'} onClick=${() => setOff(off + 1)}>${I('chevron_right')}<//>
+      <${Box} sx=${{flex: 1}}/>
+      <${Button} onClick=${() => setOff(0)} disabled=${off === 0}>Today<//>
+    <//>
+    <${Cal} c=${c} days=${days}/>
   <//>`;
 }
 
@@ -1484,6 +1639,12 @@ function Panel({c}) {
             <${ToggleButtonGroup} exclusive fullWidth size="small" value=${it.pts || null} onChange=${(e, v) => set({pts: v})} aria-label="Effort points">
               ${[1, 2, 3, 5, 8].map(v => html`<${ToggleButton} key=${v} value=${v} sx=${{fontSize: 15}}>${v}<//>`)}<//>
           <//>
+          <${Box} sx=${{gridColumn: '1 / -1'}}>
+            <${Typography} variant="body2" color="text.secondary" sx=${{mb: .75}}>Work<//>
+            <${ToggleButtonGroup} exclusive fullWidth size="small" value=${it.kind || null} onChange=${(e, v) => set({kind: v})} aria-label="Deep or shallow">
+              <${ToggleButton} value="deep" sx=${{'&.Mui-selected, &.Mui-selected:hover': {bgcolor: KIND.deep, color: ON}}}>Deep<//>
+              <${ToggleButton} value="shallow" sx=${{'&.Mui-selected, &.Mui-selected:hover': {bgcolor: KIND.shallow, color: ON}}}>Shallow<//><//>
+          <//>
           ${opts('Repeats', 'repeat', [['', 'Never'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']], v => v && !it.when ? {when: TODAY} : {})}
           ${it.status === 'waiting' ? f('Check back', 'check', 'date') : null}
         <//>
@@ -1603,6 +1764,7 @@ function App() {
   const [openId, setOpenId] = useState(null), [pf, setPf] = useState('all'), [navOpen, setNavOpen] = useState(false), [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const wide = useMediaQuery('(min-width:900px)');
+  const [pm, setPm] = useLS('tsk-pmode', 'outline');
   const upd = (id, p) => setS(x => ({...x, items: x.items.map(i => i.id === id ? {...i, ...(typeof p === 'function' ? p(i) : p)} : i)}));
   const add = it => { const id = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e4); setS(x => ({...x, items: [...x.items, {id, ...it}]})); return id; };
   const toggle = it => upd(it.id, x => x.type === 'task' && x.repeat && x.status !== 'done' ? {when: nextDue(x), status: 'todo', done: [...(x.done || []), Date.now()]} : x.status === 'done' ? {status: 'todo', doneAt: null} : {status: 'done', doneAt: Date.now()});
@@ -1646,9 +1808,25 @@ function App() {
   const move = (id, beforeId, patch) => setS(x => { const it = x.items.find(i => i.id === id); if (!it) return x; const rest = x.items.filter(i => i.id !== id), moved = {...it, ...(patch || {})};
     const k = beforeId ? rest.findIndex(i => i.id === beforeId) : -1; if (k < 0) rest.push(moved); else rest.splice(k, 0, moved); return {...x, items: rest}; });
   const mindMap = id => { if (id && view !== 'projects') go('projects'); setMapId(id); window.scrollTo(0, 0); };
-  const c = {pause, move, mapId, mindMap, popout, focus, setFocus, s: vis, all: s, archive, set: setS, upd, add, toggle, finish, go, del, now, open: setOpenId, openId, close: () => { const it = openId && byId(s, openId);
+  const c = {pause, move, mapId, mindMap, popout, focus, setFocus, s: vis, all: s, archive, set: setS, upd, add, toggle, finish, go, del, now, pm, setPm, open: setOpenId, openId, close: () => { const it = openId && byId(s, openId);
     if (it && it.fresh) setS(x => ({...x, items: it.name.trim() ? x.items.map(i => i.id === it.id ? (({fresh, ...r}) => r)(i) : i) : x.items.filter(i => i.id !== it.id)}));
     setOpenId(null); }, pf, setPf};
+  /* block generator: 10 minutes after the last block ends, nudge to start one on the next task */
+  const GAP = 10 * 60000, [snooze, setSnooze] = useState(0), [nudge, setNudge] = useState(false), nref = React.useRef('');
+  const lastEnd = useMemo(() => s.blocks.reduce((m, b) => Math.max(m, parse(b.day).getTime() + (toMin(b.start) + b.min) * 60000), 0), [s.blocks]);
+  const dueAt = Math.max(lastEnd + GAP, snooze), due = !s.running && now >= dueAt;
+  const pick = vis.items.filter(i => i.type === 'task' && bucket(i) === 'today' && i.status !== 'done').sort(byOpen)[0]
+    || vis.items.filter(i => i.type === 'task' && bucket(i) === 'week' && i.status !== 'done').sort(byOpen)[0];
+  const gkind = pick ? tKind(s, pick) || 'deep' : 'deep', glen = gkind === 'deep' ? 50 : 25;
+  const askNote = () => { try { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {} };
+  const startGen = () => { askNote(); setNudge(false); if (!pick) { go('planning'); return; }
+    setS(x => ({...x, running: {item: pick.id, start: Date.now(), planned: glen, kind: gkind, mode: 'play'}, items: x.items.map(i => i.id === pick.id && i.status === 'todo' ? {...i, status: 'started'} : i)})); go('now'); };
+  useEffect(() => { if (!due) { if (nudge) setNudge(false); return; } const k = dueAt + ':' + Math.floor((now - dueAt) / GAP); if (k === nref.current) return; nref.current = k; setNudge(true);
+    try { if (window.Notification && Notification.permission === 'granted' && document.hidden) new Notification('Time for a block', {body: pick ? pick.name : 'Pick a task in Planning', tag: 'tsk-gen'}); } catch (e) {} }, [due, now, dueAt]);
+  const genBtn = small => s.running ? null : html`<${Tooltip} title=${due ? (pick ? 'Start a ' + glen + 'm ' + gkind + ' block on ' + pick.name : 'Pick a task in Planning') : 'Time to the next block'}>
+    <${ButtonBase} onClick=${due ? startGen : () => go('planning')} sx=${{mr: 1, px: 1.25, height: 32, borderRadius: '16px', gap: .75, font: 'inherit', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', flex: 'none',
+      bgcolor: due ? 'dojo.main' : 'rgba(255,255,255,.16)', color: due ? 'dojo.contrastText' : 'inherit', '&:hover': {bgcolor: due ? 'dojo.light' : 'rgba(255,255,255,.26)'}}}>
+      ${I(due ? 'play_arrow' : 'hourglass_top', {fontSize: 18})}${due ? (small ? 'Block' : 'Start a block') : html`<${Box} component="span" sx=${{fontVariantNumeric: 'tabular-nums'}}>${small ? '' : 'Next block in '}${clock(dueAt - now)}<//>`}<//><//>`;
   const count = v => v === 'inbox' ? vis.items.filter(i => i.status === 'inbox').length : v === 'archive' ? s.items.filter(i => i.archived).length || '' : v === 'today' ? vis.items.filter(i => isTodayTask(i) && i.status !== 'done').length
     : v === 'reminders' ? vis.items.filter(i => i.reminder && i.when === TODAY && i.status !== 'done').length || ''
     : v === 'now' && s.running ? clock(s.running.planned ? s.running.planned * 60000 - elapsed(s.running, now) : elapsed(s.running, now)) : '';
@@ -1660,21 +1838,21 @@ function App() {
     <${List} dense>${NAV.map((n, k) => n ? html`<${ListItemButton} key=${n[0]} selected=${view === n[0] && !(n[0] === 'tasks' && pf !== 'all')} onClick=${() => { if (n[0] === 'tasks') setPf('all'); go(n[0]); }} sx=${{mb: .25}}>
         <${ListItemIcon} sx=${{minWidth: 36, color: n[3]}}>${I(n[2])}<//><${ListItemText} primary=${n[1]} primaryTypographyProps=${{fontWeight: 500, fontSize: 15}}/>
         <${Typography} variant="body2" color=${n[0] === 'now' ? 'dojo.main' : 'text.secondary'}>${count(n[0]) || ''}<//><//>` : html`<${Box} key=${'g' + k} sx=${{height: 10}}/>`)}<//>
-    <${ListSubheader} disableSticky sx=${{bgcolor: 'transparent', lineHeight: '30px', mt: 1}}>Projects<//>
-    <${List} dense>${projects(vis).filter(p => p.status !== 'done').slice(0, 4).map(p => html`<${ListItemButton} key=${p.id} selected=${view === 'tasks' && pf === p.id} onClick=${() => { setPf(p.id); go('tasks'); }}>
+    <${ListSubheader} disableSticky sx=${{bgcolor: 'transparent', lineHeight: '30px', mt: 1}}>Active projects<//>
+    <${List} dense>${projects(vis).filter(p => p.active && p.status !== 'done').slice(0, 4).map(p => html`<${ListItemButton} key=${p.id} selected=${view === 'tasks' && pf === p.id} onClick=${() => { setPf(p.id); go('tasks'); }}>
       <${ListItemIcon} sx=${{minWidth: 36}}><${Box} sx=${{position: 'relative', width: 18, height: 18}}>
         <${CircularProgress} variant="determinate" value=${100} size=${18} thickness=${6} sx=${{color: 'action.selected', position: 'absolute'}}/>
         <${CircularProgress} variant="determinate" value=${pct(s, p)} size=${18} thickness=${6} sx=${{color: '#4fc3f7', position: 'absolute'}}/><//><//>
       <${ListItemText} primary=${p.name} primaryTypographyProps=${{noWrap: true, fontSize: 14}}/><//>`)}
-      ${projects(vis).filter(p => p.status !== 'done').length > 4 ? html`<${ListItemButton} onClick=${() => go('projects')}>
+      ${projects(vis).filter(p => p.active && p.status !== 'done').length > 4 ? html`<${ListItemButton} onClick=${() => go('projects')}>
         <${ListItemIcon} sx=${{minWidth: 36, color: 'text.secondary'}}>${I('more_horiz', {fontSize: 18})}<//>
-        <${ListItemText} primary=${'All ' + projects(vis).filter(p => p.status !== 'done').length + ' projects'} primaryTypographyProps=${{fontSize: 14, color: 'text.secondary'}}/><//>` : null}<//>
+        <${ListItemText} primary=${'All ' + projects(vis).filter(p => p.active && p.status !== 'done').length + ' projects'} primaryTypographyProps=${{fontSize: 14, color: 'text.secondary'}}/><//>` : null}<//>
   <//>`;
-  const V = {inbox: Inbox, now: Now, today: Today, upcoming: Upcoming, week: Week, habits: Habits, reminders: Reminders, tasks: Tasks, projects: Projects, logs: Logs, archive: Archive}[view];
+  const V = {inbox: Inbox, now: Now, planning: Planning, calendar: Calendar, week: Week, tasks: Tasks, projects: Projects}[view];
   return html`<${ThemeProvider} theme=${theme}><${CssBaseline}/>
     <${Box} sx=${{display: 'flex', minHeight: '100vh'}}>
       ${wide ? html`<${AppBar} position="fixed" elevation=${4} sx=${{zIndex: t => t.zIndex.drawer + 1}}><${Toolbar}>${logo}<${Box} sx=${{flex: 1}}/>
-          ${nextBtn(false)}
+          ${genBtn(false)}${nextBtn(false)}
           ${s.running ? html`<${Button} color="dojo" variant="contained" startIcon=${I(s.running.pausedAt ? 'pause' : 'timer')} onClick=${() => go('now')} sx=${{maxWidth: 520, textTransform: 'none'}}>
             <${Box} component="span" sx=${{fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>${count('now')}<//>
             ${runName ? html`<${Box} component="span" sx=${{ml: 1.25, pl: 1.25, borderLeft: '1px solid rgba(0,0,0,.3)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>${runName}<//>` : null}<//>` : null}
@@ -1687,11 +1865,11 @@ function App() {
         ${wide ? html`<${Toolbar}/>` : html`<${AppBar} position="sticky" elevation=${4}>
           <${Toolbar}><${IconButton} edge="start" color="inherit" aria-label="Menu" onClick=${() => setNavOpen(true)}>${I('menu')}<//>
             <${Typography} noWrap sx=${{ml: 1, flex: 1, fontSize: 20, fontWeight: 500}}>${NAV.find(n => n && n[0] === view)[1]}<//>
-            ${s.running ? null : nextBtn(true)}
+            ${s.running ? null : due ? genBtn(true) : nextBtn(true)}
             ${s.running ? html`<${Chip} size="small" color="dojo" label=${count('now') + (runName ? '  ' + runName : '')} onClick=${() => go('now')} sx=${{maxWidth: 200}}/>` : null}
             ${SB ? html`<${Tooltip} title=${!user ? 'Sign in to sync' : sync.st === 'err' ? 'Sync failed' : sync.st === 'offline' ? 'Offline' : 'Synced'}><${IconButton} color="inherit" aria-label="Sync" onClick=${() => setAcct(true)}>${I(!user ? 'cloud_off' : sync.st === 'busy' ? 'cloud_sync' : sync.st === 'err' || sync.st === 'offline' ? 'cloud_alert' : 'cloud_done')}<//><//>` : null}
           ${html`<${Tooltip} title="Theme"><${IconButton} color="inherit" aria-label="Theme" onClick=${e => setThemeMenu(e.currentTarget)}>${I(pref === 'auto' ? 'contrast' : pref === 'light' ? 'light_mode' : 'dark_mode')}<//><//>`}<//><//>`}
-        <${Box} sx=${{maxWidth: ['week', 'today', 'tasks', 'projects', 'now'].includes(view) ? 1280 : 1080, mx: 'auto', px: {xs: 2, md: 5}, py: {xs: 2.5, md: 4}}}><${V} c=${c}/><//>
+        <${Box} sx=${{maxWidth: view === 'planning' || view === 'projects' && pm === 'canvas' ? 'none' : ['week', 'calendar', 'tasks', 'projects', 'now'].includes(view) ? 1280 : 1080, mx: 'auto', px: {xs: 2, md: view === 'planning' ? 3 : 5}, py: {xs: 2.5, md: view === 'planning' ? 2.5 : 4}}}><${V} c=${c}/><//>
       <//>
     <//>
     <${Panel} c=${c}/>
@@ -1701,6 +1879,9 @@ function App() {
         ${I(ic, {mr: 1.5, fontSize: 20})}<${Box} sx=${{flex: 1, mr: 3}}>${l}<//>${pref === v ? I('check', {fontSize: 18, color: 'primary.main'}) : null}<//>`)}<//>
     <${Snackbar} open=${!!undo} autoHideDuration=${8000} onClose=${(e, r) => r !== 'clickaway' && setUndo(null)} message=${undo ? undo.msg : ''}
       action=${undo && undo.prev ? html`<${Button} color="primary" onClick=${() => { setS(undo.prev); setUndo(null); }}>Undo<//>` : null}/>
+    <${Snackbar} open=${nudge && due} anchorOrigin=${{vertical: 'bottom', horizontal: 'center'}} message=${'No block in the last 10 minutes' + (pick ? '. Next: ' + pick.name : '')}
+      action=${html`<${Button} color="primary" onClick=${() => { askNote(); setNudge(false); setSnooze(Date.now() + GAP); }}>Snooze 10m<//>
+        <${Button} variant="contained" color="dojo" size="small" startIcon=${I('play_arrow')} onClick=${startGen} sx=${{ml: .5}}>${pick ? 'Start ' + glen + 'm' : 'Pick a task'}<//>`}/>
     <${Snackbar} open=${full}><${Alert} severity="warning" variant="filled">Not saved: this browser's storage is full. Remove an image.<//><//>
   <//>`;
 }

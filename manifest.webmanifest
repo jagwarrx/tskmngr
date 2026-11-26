@@ -1,7 +1,7 @@
 {
   "name": "tskmngr",
   "short_name": "tskmngr",
-  "start_url": "./#today",
+  "start_url": "./#planning",
   "scope": "./",
   "display": "standalone",
   "background_color": "#121212",
