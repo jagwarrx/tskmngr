@@ -1259,6 +1259,7 @@ function Kanban({c}) {
   const s = c.s;
   const card = p => { const t = tasksOf(s, p.id), d = t.filter(x => x.status === 'done').length, cur = milestones(s, p.id).find(m => !msDone(s, m));
     return html`<${Stack} direction="row" alignItems="flex-start" spacing=${.5}>
+        <${Box} sx=${{mt: .1}}><${ActDot} c=${c} p=${p} size=${18}/><//>
         <${Typography} fontWeight="600" sx=${{flex: 1, lineHeight: 1.3}}>${p.name}<//>
         <${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }} sx=${{mt: -.5, mr: -.5}}>
           ${I('account_tree', {fontSize: 18})}<//><//>
@@ -1439,6 +1440,22 @@ function Projects({c}) {
   const mode = c.pm, ps = projects(c.s), act = ps.filter(p => p.active && p.status !== 'done'), later = ps.filter(p => !p.active && p.status !== 'done'), done = ps.filter(p => p.status === 'done');
   const [openP, setOpenP] = useState({}), [showDone, setShowDone] = useState(false), isOpen = p => openP[p.id] != null ? openP[p.id] : !!p.active;
   const newP = () => { const id = c.add({type: 'project', name: '', status: 'todo', fresh: true}); c.open(id); };
+  const mp = c.mapId && byId(c.s, c.mapId);
+  if (mp && mp.type === 'project') return html`<${Box}>
+    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
+      <${Button} startIcon=${I('arrow_back')} onClick=${() => c.mindMap(null)}>Projects<//>
+      <${Box} sx=${{flex: 1}}/>
+      <${Select} size="small" value=${mp.id} onChange=${e => c.mindMap(e.target.value)} sx=${{minWidth: 220}} inputProps=${{'aria-label': 'Project'}}>
+        ${ps.map(p => html`<${MenuItem} key=${p.id} value=${p.id}>${p.name}<//>`)}<//>
+    <//>
+    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
+      <${ActDot} c=${c} p=${mp} size=${26}/>
+      <${Typography} variant="h4" component="h1" noWrap sx=${{flex: 1, minWidth: 0}}>${mp.name}<//>
+      <${Status} v=${mp.status}/>
+    <//>
+    <${Typography} color="text.secondary" onClick=${() => c.open(mp.id)} sx=${{mb: 2.5, mt: -1, cursor: 'pointer'}}>${mp.doneWhen ? 'Goal: ' + mp.doneWhen : 'No goal'}<//>
+    <${MindMap} c=${c} p=${mp}/>
+  <//>`;
   const prow = p => { const t = tasksOf(c.s, p.id), o = isOpen(p), ms = milestones(c.s, p.id);
     return html`<${Box} key=${p.id} sx=${{mb: .5}}>
       <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{py: .5, pr: 1, borderRadius: 1, '&:hover': {bgcolor: 'action.hover'}}}>
@@ -1446,8 +1463,12 @@ function Projects({c}) {
         <${ActDot} c=${c} p=${p}/>
         <${Typography} fontWeight="600" noWrap onClick=${() => c.open(p.id)} sx=${{flex: 1, minWidth: 0, cursor: 'pointer', textDecoration: p.status === 'done' ? 'line-through' : 'none'}}>${p.name}<//>
         <${Typography} variant="body2" color="text.secondary" sx=${{whiteSpace: 'nowrap'}}>${t.filter(x => x.status === 'done').length} of ${t.length}<//>
+        <${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${() => c.mindMap(p.id)}>${I('account_tree', {fontSize: 18})}<//><//>
       <//>
       ${o ? html`<${Box} sx=${{pl: {xs: 3, sm: 7}, pr: 1, pb: 1}}>
+        ${p.doneWhen || p.startDate || p.due ? html`<${Typography} variant="body2" color="text.secondary" onClick=${() => c.open(p.id)} sx=${{mb: 1, cursor: 'pointer'}}>
+          ${[p.doneWhen ? 'Goal: ' + p.doneWhen : '', p.startDate ? 'Starts ' + fmtDay(p.startDate) : '', p.due ? 'Due ' + fmtDay(p.due) : ''].filter(Boolean).join(', ')}<//>` : null}
+        ${ms.length ? html`<${Box} sx=${{mb: 1.5}}><${Line} c=${c} p=${p}/><//>` : null}
         ${ms.map(m => html`<${Box} key=${m.id}><${Stack} direction="row" alignItems="center" spacing=${.75} onClick=${() => c.open(m.id)} sx=${{pl: 1, pt: .75, pb: .25, cursor: 'pointer', color: 'text.secondary'}}>
             ${I(msDone(c.s, m) ? 'check_circle' : 'flag', {fontSize: 16})}<${Typography} variant="body2" fontWeight="600">${m.name}<//><//>
           <${Box} sx=${{pl: 2}}>${msTasks(c.s, m.id).sort(byOpen).map(x => html`<${Sq} key=${x.id} c=${c} t=${x} src="proj" tag=${BLABEL[bucket(x)] || ''}/>`)}<//><//>`)}
@@ -1467,8 +1488,9 @@ function Projects({c}) {
     <${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && c.setPm(v)} sx=${{mb: 2}}>
       <${ToggleButton} value="outline">${I('format_list_bulleted', {fontSize: 18, mr: .75})}Outline<//>
       <${ToggleButton} value="canvas">${I('dashboard', {fontSize: 18, mr: .75})}Canvas<//>
-      <${ToggleButton} value="map">${I('account_tree', {fontSize: 18, mr: .75})}Mind map<//><//>
-    ${mode === 'canvas' ? html`<${Canvas} c=${c} lkey="proj:" frames=${frames} h="calc(100vh - 250px)"/>`
+      <${ToggleButton} value="map">${I('account_tree', {fontSize: 18, mr: .75})}Mind map<//>
+      <${ToggleButton} value="kanban">${I('view_kanban', {fontSize: 18, mr: .75})}Kanban<//><//>
+    ${mode === 'kanban' ? html`<${Kanban} c=${c}/>` : mode === 'canvas' ? html`<${Canvas} c=${c} lkey="proj:" frames=${frames} h="calc(100vh - 250px)"/>`
       : mode === 'map' ? html`<${ProjMap} c=${c} act=${act} later=${later}/>`
       : html`${group('Active', act, '#4fc3f7')}${group('Later', later, '#90a4ae')}
         ${done.length ? html`<${Box}><${Stack} direction="row" alignItems="center" spacing=${1} onClick=${() => setShowDone(!showDone)} sx=${{cursor: 'pointer', mb: 1, userSelect: 'none'}}>
