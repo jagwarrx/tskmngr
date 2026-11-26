@@ -252,6 +252,10 @@ function Cal({c, days, from = 6, to = 23}) {
   /* done box on calendar items: tasks and events toggle done, habits toggle that day */
   const check = (id, hid, dd) => { if (hid) c.upd(hid, x => ({log: (x.log || []).includes(dd) ? x.log.filter(y => y !== dd) : [...(x.log || []), dd]}));
     else { const it = byId(c.s, id); if (it) c.toggle(it); } };
+  /* start a block on a calendar item right away, as long as the item's slot, then open Now */
+  const play = e => { const it = byId(c.s, e.item); if (!it || c.s.running) return;
+    c.set(x => ({...x, running: {item: it.id, start: Date.now(), planned: Math.max(5, Math.min(240, e.min)), kind: 'deep', mode: 'play'},
+      items: x.items.map(i => i.id === it.id && i.type === 'task' && i.status === 'todo' ? {...i, status: 'started'} : i)})); c.go('now'); };
   const tick = (done, name, run, size) => html`<${Box} component="button" aria-label=${(done ? 'Not done: ' : 'Done: ') + name} aria-pressed=${!!done}
     onPointerDown=${ev => ev.stopPropagation()} onClick=${ev => { ev.stopPropagation(); run(); }}
     sx=${{p: 0, m: 0, ml: '-2px', border: 0, bgcolor: 'transparent', color: ON, cursor: 'pointer', display: 'flex', flex: 'none', borderRadius: '3px', '&:hover': {bgcolor: 'rgba(0,0,0,.1)'}}}>
@@ -330,7 +334,13 @@ function Cal({c, days, from = 6, to = 23}) {
             sx=${{position: 'absolute', top: Math.max(0, (e.start - from * 60) / 60 * H) + 1.5, height: h, left: 'calc(' + e.col * 100 / e.cols + '% + 3px)', width: 'calc(' + 100 / e.cols + '% - 6px)',
               borderRadius: '4px', px: 1, py: h > 40 ? .75 : .25, overflow: 'hidden', bgcolor: e.bg, color: ON, cursor: drag && drag.id === e.id ? 'grabbing' : 'grab', touchAction: 'none',
               boxShadow: e.drag ? '0 10px 24px rgba(0,0,0,.5)' : 'inset 0 0 0 1px rgba(0,0,0,.18)', zIndex: e.drag ? 5 : 1 + e.col, opacity: e.drag ? .92 : e.done ? .5 : 1,
-              transition: e.drag ? 'none' : 'box-shadow .15s', '&:hover': {filter: 'brightness(1.06)'}}}>
+              transition: e.drag ? 'none' : 'box-shadow .15s', '&:hover': {filter: 'brightness(1.06)'}, '&:hover .cal-play': {opacity: 1}}}>
+            ${e.bid || e.done || c.s.running ? null : html`<${Tooltip} title=${'Start a ' + Math.max(5, Math.min(240, e.min)) + 'm block'}><${Box} component="button" className="cal-play" aria-label=${'Start a block on ' + e.name}
+              onPointerDown=${ev => ev.stopPropagation()} onClick=${ev => { ev.stopPropagation(); play(e); }}
+              sx=${{position: 'absolute', top: h > 40 ? 6 : 2, right: 6, zIndex: 2, width: h > 40 ? 26 : 20, height: h > 40 ? 26 : 20, p: 0, border: 0, borderRadius: '50%', cursor: 'pointer',
+                display: 'grid', placeItems: 'center', bgcolor: 'rgba(0,0,0,.72)', color: '#fff', opacity: 0, transition: 'opacity .12s',
+                '&:focus-visible': {opacity: 1, outline: '2px solid #fff'}, '&:hover': {bgcolor: '#F7941F', color: ON}, '@media (hover: none)': {opacity: .85}}}>
+              ${I('play_arrow', {fontSize: h > 40 ? 18 : 15})}<//><//>`}
             <${Stack} direction="row" alignItems="center" spacing=${.5} sx=${{minWidth: 0}}>
               ${e.bid ? null : tick(e.done, e.name, () => check(e.item, e.hid, days[e.di]))}
               <${Typography} noWrap sx=${{flex: 1, minWidth: 0, fontSize: 14, fontWeight: 500, lineHeight: '18px', color: ON, textDecoration: e.done ? 'line-through' : 'none'}}>${e.name}<//><//>
