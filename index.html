@@ -1,0 +1,1703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tskmngr</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<meta name="theme-color" content="#121212">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="tskmngr">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block">
+<style>
+/* VOICE: a working tool, calm and dense, nothing to read twice.
+   IDEA: one table seen through eight filters, laid out like Things 3.
+   PICTURE: the tool itself; Now is one big card, Week is a ChessDojo style calendar.
+   COLOUR and TYPE: ChessDojo's own MUI theme: #121212 with elevation overlays, blue #90caf9, lilac #ce93d8, dojo orange #F7941F; Roboto only, 4px corners.
+   LAYOUT: sidebar of views and projects, content up to 1080px, a panel slides in on the right. */
+html,body,#root{height:100%}
+body{margin:0;background:#121212}
+:root[data-theme=light] body{background:#f6f7f9}
+.material-symbols-rounded{font-variation-settings:'FILL' 0,'wght' 400;user-select:none}
+#boot{font:15px Roboto,Arial,sans-serif;color:#999;padding:40px}
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">Loading</div></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@mui/material@5.16.7/umd/material-ui.production.min.js"></script>
+<script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.2/dist/umd/supabase.js"></script>
+<script>
+{
+const {useState, useEffect, useMemo} = React;
+const {createTheme, ThemeProvider, CssBaseline, Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText, ListSubheader, Typography, IconButton, Icon,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer, Paper, Chip, Checkbox, TextField, MenuItem, ToggleButton, ToggleButtonGroup,
+  Card, Button, LinearProgress, CircularProgress, Stack, useMediaQuery, AppBar, Toolbar, Fab, Dialog, Snackbar, Alert, Tooltip, Popover, ButtonBase, MenuList, InputBase, Select, Menu} = MaterialUI;
+const html = htm.bind(React.createElement);
+const I = (name, sx) => html`<${Icon} baseClassName="material-symbols-rounded" sx=${{fontSize: 20, ...sx}}>${name}<//>`;
+
+/* dates */
+const pad = n => String(n).padStart(2, '0');
+const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const TODAY = iso(new Date());
+const day = n => iso(addDays(new Date(), n));
+const weekStart = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return addDays(x, -x.getDay()); };
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const hm = m => pad(Math.floor(m / 60)) + ':' + pad(m % 60);
+const tasksN = n => n === 1 ? ' task' : ' tasks';
+const dur = m => m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') : m + 'm';
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const fmtDay = s => { if (!s) return ''; if (s === TODAY) return 'Today'; if (s === day(1)) return 'Tomorrow'; if (s === day(-1)) return 'Yesterday';
+  const d = parse(s); return DOW[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()]; };
+const clock = ms => { const a = Math.abs(Math.round(ms / 1000)); return (Math.floor(a / 3600) ? Math.floor(a / 3600) + ':' : '') + pad(Math.floor(a / 60) % 60) + ':' + pad(a % 60); };
+
+const KEY = 'one-table-v3';
+const migrate = s => ({...s, items: s.items.map(i => i.type === 'habit' && i.project ? {...i, type: 'task', status: 'todo', when: i.when || TODAY} : i)});
+const load = () => { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.items) return migrate(s); } catch (e) {} return {items: [], blocks: [], running: null, top: null}; };
+const save = s => { try { localStorage.setItem(KEY, JSON.stringify(s)); return true; } catch (e) { return false; } };
+
+/* lookups */
+const byId = (s, id) => s.items.find(i => i.id === id);
+const projects = s => s.items.filter(i => i.type === 'project');
+const milestones = (s, pid) => s.items.filter(i => i.type === 'milestone' && i.project === pid);
+const tasksOf = (s, pid) => s.items.filter(i => i.type === 'task' && i.project === pid);
+const habitsOf = () => [];
+const msTasks = (s, mid) => s.items.filter(i => i.type === 'task' && i.milestone === mid);
+/* weekly habits run on chosen days; each change is dated so earlier days keep the old schedule */
+const ALLD = [0, 1, 2, 3, 4, 5, 6];
+const daysOn = (h, dd) => { let cur = h.dow != null ? [+h.dow] : ALLD; (h.sched || []).forEach(e => { if (e.from <= dd) cur = e.days; }); return cur; };
+const setDays = (h, days) => ({sched: [...(h.sched || []).filter(e => e.from < TODAY), {from: TODAY, days: [...days].sort()}]});
+const habitOn = (h, dd) => h.from && dd < h.from ? false : h.repeat === 'weekly' ? daysOn(h, dd).includes(parse(dd).getDay()) : h.repeat === 'monthly' ? h.dom != null && parse(dd).getDate() === +h.dom : true;
+const placeAt = (it, dd, m) => it.type === 'habit'
+  ? {time: m == null ? null : hm(m), dur: it.dur || 15, ...(it.repeat === 'monthly' ? {dom: parse(dd).getDate()} : {})}
+  : {when: dd, time: m == null ? null : hm(m), status: it.status === 'inbox' ? 'todo' : it.status, ...(it.type === 'event' ? {dur: it.dur || 60} : {})};
+const archived = (s, i) => !!(i.archived || (i.project && (byId(s, i.project) || {}).archived));
+const msPts = (s, mid) => msTasks(s, mid).reduce((n, t) => n + (+t.pts || 0), 0);
+const ptsLabel = n => n ? ' (' + n + ')' : '';
+const msDone = (s, m) => { const t = msTasks(s, m.id); return m.status === 'done' || (t.length > 0 && t.every(x => x.status === 'done')); };
+const elapsed = (r, now) => (r.pausedAt || now) - r.start - (r.paused || 0);
+const projOf = it => !it ? null : it.type === 'project' ? it.id : it.project;
+const pct = (s, p) => { const t = tasksOf(s, p.id); return t.length ? Math.round(100 * t.filter(x => x.status === 'done').length / t.length) : 0; };
+/* a project's first open task: first milestone's first task, else the first loose task */
+const REP = {daily: 'every day', weekly: 'every week', monthly: 'every month', yearly: 'every year'};
+const occ = (st, rep, k) => { const d = parse(st), y = d.getFullYear(), m = d.getMonth(), dd = d.getDate();
+  if (rep === 'daily' || rep === 'weekly') return iso(addDays(d, k * (rep === 'daily' ? 1 : 7)));
+  const ny = rep === 'yearly' ? y + k : y, nm = rep === 'yearly' ? m : m + k; return iso(new Date(ny, nm, Math.min(dd, new Date(ny, nm + 1, 0).getDate()))); };
+/* a repeating event whose date has passed moves to its next date; the passed dates stay in past[] for the logs */
+const stale = i => i.type === 'event' && REP[i.repeat] && i.when && i.when < TODAY;
+const roll = i => { if (!stale(i)) return i; const st = i.start || i.when, past = [...(i.past || [])]; let k = 0, d;
+  while ((d = occ(st, i.repeat, k)) < TODAY && k < 50000) { if (d >= i.when && !past.includes(d)) past.push(d); k++; }
+  return {...i, when: d, status: 'todo', doneAt: null, start: st, past: past.slice(-400)}; };
+const nextDue = it => { const b = it.when && it.when > TODAY ? parse(it.when) : new Date(); const d = new Date(b);
+  if (it.repeat === 'weekly') d.setDate(d.getDate() + 7); else if (it.repeat === 'monthly') d.setMonth(d.getMonth() + 1); else d.setDate(d.getDate() + 1); return iso(d); };
+const firstTask = (s, pid) => { const ok = t => t.status !== 'done' && !t.archived;
+  for (const m of milestones(s, pid)) { const t = msTasks(s, m.id).find(ok); if (t) return t; } return tasksOf(s, pid).find(t => !t.milestone && ok(t)) || null; };
+/* on a project's start date its first task shows on that day; a project with no open task shows itself */
+const withStarts = s => { const m = {}; s.items.forEach(p => { if (p.type !== 'project' || !p.startDate || p.status === 'done') return; const t = firstTask(s, p.id); if (t && !t.when) m[t.id] = p.startDate; });
+  return {...s, items: s.items.map(i => m[i.id] ? {...i, when: m[i.id], viaStart: true, status: i.status === 'inbox' ? 'todo' : i.status} : i)}; };
+const startingOn = (s, dd) => s.items.filter(p => p.type === 'project' && p.startDate === dd && p.status !== 'done' && !firstTask(s, p.id));
+const isTodayTask = i => i.type === 'task' && i.when && i.when <= TODAY && i.status !== 'inbox' && (i.status !== 'done' || (i.doneAt && iso(new Date(i.doneAt)) === TODAY));
+const periodKey = (d, rep) => rep === 'monthly' ? d.slice(0, 7) : d;
+const habitDone = h => (h.log || []).some(d => periodKey(d, h.repeat) === periodKey(TODAY, h.repeat));
+function streak(h) { const keys = new Set((h.log || []).map(d => periodKey(d, h.repeat))); let d = new Date(), n = 0;
+  if (h.repeat === 'weekly') { let k = 0; const back = () => { do { d = addDays(d, -1); k++; } while (k < 400 && !habitOn(h, iso(d))); };
+    if (!habitOn(h, iso(d)) || !keys.has(iso(d))) back(); while (k < 400 && keys.has(iso(d))) { n++; back(); } return n; }
+  const step = () => { d = h.repeat === 'monthly' ? new Date(d.getFullYear(), d.getMonth() - 1, 1) : addDays(d, -1); };
+  if (!keys.has(periodKey(iso(d), h.repeat))) step();
+  while (keys.has(periodKey(iso(d), h.repeat))) { n++; step(); } return n; }
+
+const markHabit = (c, h) => c.upd(h.id, x => ({log: habitDone(x) ? (x.log || []).filter(d => periodKey(d, x.repeat) !== periodKey(TODAY, x.repeat)) : [...(x.log || []), TODAY]}));
+const starToggle = (c, it) => c.upd(it.id, x => x.when === TODAY ? {when: null, time: null} : {when: TODAY, status: x.status === 'inbox' ? 'todo' : x.status});
+function Star({c, it, size}) {
+  const on = it.when && it.when <= TODAY && it.status !== 'done';
+  return html`<${Tooltip} title=${on ? 'Take off Today' : 'Do today'}><${IconButton} size="small" aria-label=${on ? 'Take off Today' : 'Do today'} aria-pressed=${!!on}
+    onClick=${e => { e.stopPropagation(); starToggle(c, it); }} sx=${{color: on ? '#f6c343' : 'text.disabled', '&:hover': {color: '#f6c343'}}}>
+    <${Icon} baseClassName="material-symbols-rounded" sx=${{fontSize: size || 20, fontVariationSettings: on ? "'FILL' 1" : "'FILL' 0"}}>star<//><//><//>`;
+}
+const STATUS = ['inbox', 'todo', 'started', 'waiting', 'done'];
+const SLABEL = {inbox: 'Inbox', todo: 'To do', started: 'Started', waiting: 'Waiting', done: 'Done'};
+const SCOLOR = {inbox: 'default', todo: 'default', started: 'primary', waiting: 'warning', done: 'success'};
+const KIND = {deep: '#6c9fd8', shallow: '#77b38c'}, PLAN = '#e99d4a', HABIT = '#ce93d8', EVENT = '#4db6ac', ON = 'rgba(0,0,0,.87)';
+const Status = ({v}) => html`<${Chip} size="small" label=${SLABEL[v] || v} color=${SCOLOR[v] || 'default'} variant=${v === 'todo' || v === 'inbox' ? 'outlined' : 'filled'}/>`;
+const VIEWS = ['inbox', 'now', 'today', 'upcoming', 'week', 'habits', 'reminders', 'tasks', 'projects', 'logs', 'archive'];
+const NAV = [['inbox', 'Inbox', 'inbox', '#90caf9'], 0, ['now', 'Now', 'play_circle', '#F7941F'], ['today', 'Today', 'star', '#f6c343'], ['upcoming', 'Upcoming', 'date_range', '#ef8a80'],
+  ['week', 'Week', 'calendar_view_week', '#ce93d8'], 0, ['habits', 'Habits', 'local_fire_department', '#ef6c4a'], ['reminders', 'Reminders', 'notifications', '#ffb74d'], ['tasks', 'Tasks', 'checklist', '#66bb6a'],
+  ['projects', 'Projects', 'flag', '#4fc3f7'], ['logs', 'Logs', 'history', '#b0bec5'], 0, ['archive', 'Archive', 'inventory_2', '#90a4ae']];
+const hashView = () => { const h = location.hash.slice(1); return VIEWS.includes(h) ? h : 'today'; };
+const themeMode = () => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+const makeTheme = mode => { const dark = mode === 'dark'; return createTheme({
+  palette: {mode,
+    primary: {main: dark ? '#90caf9' : '#1976d2'}, secondary: {main: dark ? '#ce93d8' : '#9c27b0'},
+    success: {main: dark ? '#66bb6a' : '#2e7d32'}, warning: {main: dark ? '#ffa726' : '#ed6c02'}, info: {main: dark ? '#29b6f6' : '#0288d1'}, error: {main: dark ? '#f44336' : '#d32f2f'},
+    dojo: {main: '#F7941F', light: '#f8a94b', dark: '#ac6715', contrastText: 'rgba(0, 0, 0, 0.87)'},
+    background: dark ? {default: '#121212', paper: '#121212'} : {default: '#fff', paper: '#fff'}},
+  shape: {borderRadius: 4},
+  typography: {fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif', button: {textTransform: 'none'}},
+  components: {
+    MuiTableCell: {styleOverrides: {head: {fontWeight: 500}}},
+    MuiTableHead: {styleOverrides: {root: {'& .MuiTableCell-head': {backgroundColor: 'transparent'}}}},
+    MuiToggleButton: {styleOverrides: {root: {textTransform: 'none'}}},
+    MuiListItemButton: {styleOverrides: {root: {borderRadius: 4}}},
+    MuiDrawer: {styleOverrides: {paper: {backgroundImage: 'none'}}}}}); };
+
+/* shared pieces */
+const Head = ({icon, color, title, sub, action}) => html`
+  <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 3}}>
+    <${Box} sx=${{color, display: 'flex'}}>${I(icon, {fontSize: 30})}<//>
+    <${Box} sx=${{flex: 1, minWidth: 0}}>
+      <${Typography} variant="h4" component="h1">${title}<//>
+      ${sub ? html`<${Typography} variant="body2" color="text.secondary" sx=${{mt: .5}}>${sub}<//>` : null}
+    <//>
+    ${action || null}
+  <//>`;
+
+function Row({c, it, pin, noDate}) {
+  const p = it.project && byId(c.s, it.project), m = it.milestone && byId(c.s, it.milestone), done = it.status === 'done';
+  return html`<${Box} draggable="true" onDragStart=${e => e.dataTransfer.setData('text/plain', it.id)} onClick=${() => c.open(it.id)}
+      sx=${{display: 'flex', alignItems: 'center', gap: 1, pr: 1, borderRadius: 1, cursor: 'pointer', '&:hover': {bgcolor: 'action.hover'}}}>
+    <${Checkbox} checked=${done} onClick=${e => e.stopPropagation()} onChange=${() => c.toggle(it)} icon=${I('radio_button_unchecked')}
+      checkedIcon=${I('check_circle')} color="success" inputProps=${{'aria-label': 'Done'}}/>
+    <${Box} sx=${{flex: 1, minWidth: 0, py: .75}}>
+      <${Typography} noWrap sx=${{textDecoration: done ? 'line-through' : 'none', color: done ? 'text.disabled' : 'text.primary'}}>${it.name}<//>
+      ${p ? html`<${Typography} variant="caption" color="text.secondary" noWrap component="div">${p.name}${m ? ', ' + m.name : ''}<//>` : null}
+    <//>
+    ${it.repeat && it.type === 'task' ? html`<${Tooltip} title=${'Repeats ' + it.repeat}>${I('repeat', {fontSize: 18, color: 'text.secondary'})}<//>` : null}
+    ${it.images && it.images.length ? I('image', {fontSize: 18, color: 'text.secondary'}) : null}
+    ${it.status === 'waiting' ? html`<${Chip} size="small" label="Waiting" variant="outlined" color="warning"/>` : null}
+    ${!noDate && it.when && it.when !== TODAY && it.status !== 'done' ? html`<${Typography} variant="caption" color=${it.when < TODAY ? 'error' : 'text.secondary'}>${fmtDay(it.when)}<//>` : null}
+    ${it.time ? html`<${Chip} size="small" variant="outlined" label=${it.time}/>` : null}
+    ${it.type === 'task' ? html`<${Star} c=${c} it=${it}/>` : null}
+    ${pin ? html`<${Tooltip} title="Put in the top 3"><${IconButton} size="small" aria-label="Put in the top 3" onClick=${e => { e.stopPropagation(); pin(it.id); }}>${I('keep', {fontSize: 18})}<//><//>` : null}
+  <//>`;
+}
+
+function Heat({log, weeks = 22}) {
+  const set = new Set(log || []), start = addDays(weekStart(new Date()), -7 * (weeks - 1)), cols = [];
+  for (let w = 0; w < weeks; w++) { const first = addDays(start, w * 7); cols.push({label: first.getDate() <= 7 ? MON[first.getMonth()] : '', cells: [...Array(7)].map((_, d) => {
+    const dd = iso(addDays(start, w * 7 + d)); return dd > TODAY ? 0 : set.has(dd) ? 2 : 1; })}); }
+  const grid = {display: 'grid', gridAutoFlow: 'column', gridAutoColumns: '12px', gap: '3px'};
+  return html`<${Box} sx=${{overflowX: 'auto', pb: 1}}><${Box} sx=${{display: 'grid', gridTemplateColumns: '30px auto', columnGap: 1, width: 'max-content'}}>
+    <span></span>
+    <${Box} sx=${{...grid, height: 18}}>${cols.map((c, k) => html`<${Typography} key=${k} variant="caption" color="text.secondary" sx=${{whiteSpace: 'nowrap', lineHeight: '14px'}}>${c.label}<//>`)}<//>
+    <${Box} sx=${{display: 'grid', gridTemplateRows: 'repeat(7,12px)', gap: '3px'}}>${['', 'Mon', '', 'Wed', '', 'Fri', ''].map((l, k) => html`<${Typography} key=${k} variant="caption" color="text.secondary" sx=${{fontSize: 10, lineHeight: '12px'}}>${l}<//>`)}<//>
+    <${Box} sx=${{...grid, gridTemplateRows: 'repeat(7,12px)'}}>${cols.map((c, w) => c.cells.map((v, d) => html`<${Box} key=${w + '-' + d}
+      sx=${{width: 12, height: 12, borderRadius: '3px', bgcolor: v === 2 ? 'dojo.main' : v === 1 ? 'action.selected' : 'transparent'}}/>`))}<//>
+  <//><//>`;
+}
+
+function lay(evs) {
+  evs.sort((a, b) => a.start - b.start || b.min - a.min); const out = []; let g = [], end = -1;
+  const flush = () => { const cols = []; g.forEach(e => { let k = cols.findIndex(t => t <= e.start); if (k < 0) { k = cols.length; cols.push(0); } cols[k] = e.start + e.min; e.col = k; });
+    g.forEach(e => e.cols = cols.length); out.push(...g); g = []; };
+  evs.forEach(e => { if (g.length && e.start >= end) { flush(); end = -1; } g.push(e); end = Math.max(end, e.start + e.min); });
+  if (g.length) flush(); return out;
+}
+/* a slot drawn on the calendar: name it, pick task or event */
+function NewSlot({c, draft, dd, onClose}) {
+  const [name, setName] = useState(''), [type, setType] = useState(() => localStorage.getItem('one-table-newtype') || 'task');
+  const save = () => { const n = name.trim(); if (n) { c.add({type, name: n, status: 'todo', when: dd, time: hm(draft.a), dur: draft.b - draft.a}); localStorage.setItem('one-table-newtype', type); } onClose(); };
+  return html`<${Popover} open anchorReference="anchorPosition" anchorPosition=${{top: draft.y, left: draft.x}} onClose=${onClose} disableRestoreFocus
+      PaperProps=${{elevation: 8, sx: {p: 1.5, width: 300}}}>
+    <${Box} component="form" onSubmit=${e => { e.preventDefault(); save(); }}>
+      <${Typography} variant="body2" color="text.secondary" sx=${{mb: 1}}>${fmtDay(dd)}, ${hm(draft.a)} to ${hm(draft.b)}<//>
+      <${TextField} autoFocus fullWidth size="small" placeholder="Name" value=${name} onChange=${e => setName(e.target.value)} inputProps=${{'aria-label': 'Name'}}/>
+      <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{mt: 1.25}}>
+        <${ToggleButtonGroup} size="small" exclusive value=${type} onChange=${(e, v) => v && setType(v)} aria-label="Kind">
+          <${ToggleButton} value="task">Task<//><${ToggleButton} value="event">Event<//><//>
+        <${Box} sx=${{flex: 1}}/>
+        <${Button} type="submit" variant="contained" size="small" disabled=${!name.trim()}>Add<//>
+      <//>
+    <//>
+  <//>`;
+}
+function Cal({c, days, from = 6, to = 23}) {
+  const H = 52, nowD = new Date(c.now), nowMin = nowD.getHours() * 60 + nowD.getMinutes(), n = days.length, [drag, setDrag] = useState(null), sc = React.useRef(null);
+  const base = [];
+  days.forEach((dd, di) => {
+    c.s.blocks.filter(b => b.day === dd).forEach(b => base.push({id: b.id, bid: b.id, item: b.item, di, start: toMin(b.start), min: b.min, bg: KIND[b.kind],
+      tag: (b.kind === 'deep' ? 'Deep' : 'Shallow') + (b.mode === 'timer' ? ' timer' : ' block'), name: (byId(c.all || c.s, b.item) || {}).name || 'Block'}));
+    c.s.items.filter(i => i.type === 'task' && i.when === dd && i.time)
+      .forEach(i => base.push({id: 'p' + i.id, item: i.id, di, start: toMin(i.time), min: +i.dur || 30, plan: true, bg: PLAN, tag: i.repeat ? 'Repeats ' + i.repeat : 'Planned', name: i.name, done: i.status === 'done'}));
+    c.s.items.filter(i => i.type === 'event' && i.when === dd && i.time)
+      .forEach(i => base.push({id: 'e' + i.id, item: i.id, ev: true, di, start: toMin(i.time), min: +i.dur || 60, bg: EVENT, tag: i.reminder ? 'Reminder' : 'Event', name: i.name, done: i.status === 'done'}));
+    c.s.items.filter(h => h.type === 'habit' && h.time && habitOn(h, dd))
+      .forEach(h => base.push({id: 'h' + h.id + dd, item: h.id, hid: h.id, di, start: toMin(h.time), min: +h.dur || 15, bg: HABIT, tag: 'Habit', name: h.name, done: (h.log || []).includes(dd)})); });
+  /* the timeline scrolls inside its own box; open it at the current time, or at the day's first item */
+  useEffect(() => { const el = sc.current; if (!el) return;
+    const at = days.includes(TODAY) && nowMin > from * 60 && nowMin < to * 60 ? nowMin : Math.min(8 * 60, ...base.map(e => e.start));
+    el.scrollTop = Math.max(0, (at - from * 60) / 60 * H - H); }, [days[0], n]);
+  /* near the box's top or bottom edge while dragging: scroll it */
+  const edge = y => { const el = sc.current; if (!el) return 0; const r = el.getBoundingClientRect(), z = 56;
+    const v = y < r.top + z ? y - r.top - z : y > r.bottom - z ? y - r.bottom + z : 0; if (!v) return 0;
+    const t = el.scrollTop; el.scrollTop += Math.max(-18, Math.min(18, Math.round(v / 3))); return el.scrollTop !== t; };
+  const evs = base.map(e => { if (!drag || drag.id !== e.id) return e;
+    return drag.resize ? {...e, min: Math.max(15, e.min + drag.d), drag: true} : {...e, start: Math.max(0, Math.min(1425, e.start + drag.d)), di: e.di + drag.dd, drag: true}; });
+  const commit = (e, d) => { const day = days[e.di + (d.resize ? 0 : d.dd)], start = d.resize ? e.start : Math.max(0, Math.min(1425, e.start + d.d)), min = d.resize ? Math.max(15, e.min + d.d) : e.min;
+    if (e.bid) c.set(x => ({...x, blocks: x.blocks.map(b => b.id === e.bid ? {...b, day, start: hm(start), min} : b)}));
+    else if (e.hid) c.upd(e.item, x => ({...placeAt(x, day, start), dur: min}));
+    else if (e.ev) c.upd(e.item, {when: day, time: hm(start), dur: min});
+    else c.upd(e.item, {when: day, time: hm(start), dur: min}); };
+  const [hover, setHover] = useState(null), [ctx, setCtx] = useState(null);
+  /* done box on calendar items: tasks and events toggle done, habits toggle that day */
+  const check = (id, hid, dd) => { if (hid) c.upd(hid, x => ({log: (x.log || []).includes(dd) ? x.log.filter(y => y !== dd) : [...(x.log || []), dd]}));
+    else { const it = byId(c.s, id); if (it) c.toggle(it); } };
+  const tick = (done, name, run, size) => html`<${Box} component="button" aria-label=${(done ? 'Not done: ' : 'Done: ') + name} aria-pressed=${!!done}
+    onPointerDown=${ev => ev.stopPropagation()} onClick=${ev => { ev.stopPropagation(); run(); }}
+    sx=${{p: 0, m: 0, ml: '-2px', border: 0, bgcolor: 'transparent', color: ON, cursor: 'pointer', display: 'flex', flex: 'none', borderRadius: '3px', '&:hover': {bgcolor: 'rgba(0,0,0,.1)'}}}>
+    <${Icon} baseClassName="material-symbols-rounded" sx=${{fontSize: size || 17, fontVariationSettings: done ? "'FILL' 1" : "'FILL' 0"}}>${done ? 'check_box' : 'check_box_outline_blank'}<//><//>`;
+  const menu = (ev, id) => { const it = byId(c.s, id); if (!it || !(it.type === 'task' || it.type === 'event')) return; ev.preventDefault(); setCtx({x: ev.clientX, y: ev.clientY, it}); };
+  const asType = (it, t) => { c.upd(it.id, t === 'event' ? {type: 'event', status: 'todo', dur: it.dur || 60} : {type: 'task'}); setCtx(null); };
+  const minAt = ev => { const r = ev.currentTarget.getBoundingClientRect(); return Math.max(0, Math.min(1425, from * 60 + Math.floor((ev.clientY - r.top) / H * 4) * 15)); };
+  const over = (ev, di, allDay) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; if (!allDay) edge(ev.clientY); const m = allDay ? null : minAt(ev);
+    if (!hover || hover.di !== di || hover.m !== m) setHover({di, m}); };
+  const drop = (ev, dd, allDay) => { ev.preventDefault(); setHover(null); const id = ev.dataTransfer.getData('text/plain'), it = id && byId(c.s, id);
+    if (!it || !(it.type === 'task' || it.type === 'habit' || it.type === 'event')) return; if (allDay && it.type === 'habit') return; const m = allDay ? null : minAt(ev); c.upd(id, x => placeAt(x, dd, m)); };
+  const down = (ev, e) => { if (ev.button) return; ev.stopPropagation(); ev.preventDefault();
+    const w = ev.currentTarget.parentElement.getBoundingClientRect().width, resize = ev.target.dataset.h === 'r', el = sc.current;
+    const st = {x: ev.clientX, y: ev.clientY, top: el ? el.scrollTop : 0, moved: false, d: null, last: null, raf: 0};
+    const calc = m => { const dx = m.clientX - st.x, dy = m.clientY - st.y + (el ? el.scrollTop - st.top : 0);
+      st.d = {resize, d: Math.round(dy / H * 4) * 15, dd: resize ? 0 : Math.max(-e.di, Math.min(n - 1 - e.di, Math.round(dx / w)))}; setDrag({id: e.id, ...st.d}); };
+    const loop = () => { if (st.raf) return; st.raf = requestAnimationFrame(() => { st.raf = 0; if (st.last && edge(st.last.clientY)) { calc(st.last); loop(); } }); };
+    const move = m => { if (!st.moved && Math.abs(m.clientX - st.x) + Math.abs(m.clientY - st.y) < 5) return; st.moved = true; st.last = m; calc(m); loop(); };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); cancelAnimationFrame(st.raf); st.last = null; setDrag(null);
+      if (!st.moved) c.open(e.item); else if (st.d && (st.d.d || st.d.dd)) commit(e, st.d); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); };
+  const [draft, setDraft] = useState(null);
+  const make = (ev, di) => { if (ev.button || drag) return; const col = ev.currentTarget; if (ev.pointerType === 'mouse') ev.preventDefault();
+    const at = y => { const r = col.getBoundingClientRect(); return Math.max(from * 60, Math.min(to * 60 - 15, from * 60 + Math.floor((y - r.top) / H * 4) * 15)); };
+    const m0 = at(ev.clientY), st = {moved: false, last: null, raf: 0, y: ev.clientY};
+    setDraft({di, a: m0, b: m0 + 30, live: true});
+    const calc = y => { const m = at(y); setDraft({di, a: Math.min(m0, m), b: Math.max(m0, m) + 15, live: true}); };
+    const loop = () => { if (st.raf) return; st.raf = requestAnimationFrame(() => { st.raf = 0; if (st.last != null && edge(st.last)) { calc(st.last); loop(); } }); };
+    const move = m => { if (!st.moved && Math.abs(m.clientY - st.y) < 5) return; st.moved = true; st.last = m.clientY; calc(m.clientY); loop(); };
+    const end = (m, cancel) => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', no); cancelAnimationFrame(st.raf); st.last = null;
+      setDraft(d => cancel || !d ? null : {...d, live: false, x: m.clientX, y: m.clientY}); };
+    const up = m => end(m), no = m => end(m, true);
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', no); };
+  const cols = `56px repeat(${n}, minmax(0,1fr))`;
+  return html`<${Box}>
+    <${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 2, mb: 1}} useFlexGap>${[[KIND.deep, 'Deep block'], [KIND.shallow, 'Shallow block'], [PLAN, 'Planned task'], [HABIT, 'Habit'], [EVENT, 'Event']].map(([col, l]) => html`<${Stack} key=${l} direction="row" spacing=${.75} alignItems="center">
+      <${Box} sx=${{width: 12, height: 12, borderRadius: '3px', bgcolor: col}}/><${Typography} variant="caption" color="text.secondary">${l}<//><//>`)}
+      <//>
+    <${Paper} variant="outlined" sx=${{overflowX: 'auto', borderRadius: 2}}><${Box} sx=${{minWidth: n > 1 ? 780 : 0}}>
+    ${n > 1 ? html`<${Box} sx=${{display: 'grid', gridTemplateColumns: cols, borderBottom: 1, borderColor: 'divider', overflowY: 'hidden', scrollbarGutter: 'stable'}}>
+      <span></span>
+      ${days.map(dd => { const d = parse(dd), t = dd === TODAY; return html`<${Box} key=${dd} sx=${{textAlign: 'center', py: 1.5}}>
+        <${Typography} sx=${{fontSize: 16}} color=${t ? 'primary' : 'text.primary'}>${DOW[d.getDay()]}<//>
+        <${Box} sx=${{mx: 'auto', mt: .5, width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 26,
+          bgcolor: t ? 'primary.main' : 'transparent', color: t ? 'primary.contrastText' : 'text.primary'}}>${d.getDate()}<//><//>`; })}
+    <//>` : null}
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: cols, borderBottom: 1, borderColor: 'divider', minHeight: 36, overflowY: 'hidden', scrollbarGutter: 'stable'}}>
+      <${Typography} variant="caption" color="text.secondary" sx=${{fontStyle: 'italic', textAlign: 'right', pr: 1.25, pt: 1}}>All day<//>
+      ${days.map((dd, di) => html`<${Box} key=${dd} onDragOver=${ev => over(ev, di, true)} onDragLeave=${() => setHover(null)} onDrop=${ev => drop(ev, dd, true)}
+          sx=${{borderLeft: 1, borderColor: 'divider', p: .5, display: 'flex', flexDirection: 'column', gap: .5, bgcolor: hover && hover.di === di && hover.m == null ? 'action.hover' : 'transparent'}}>
+        ${startingOn(c.s, dd).map(p => html`<${Box} key=${p.id} onClick=${() => c.open(p.id)} title=${p.name}
+          sx=${{bgcolor: '#4fc3f7', color: ON, borderRadius: '4px', px: .75, fontSize: 12.5, lineHeight: '20px', cursor: 'pointer', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis'}}>${p.name}<//>`)}
+        ${c.s.items.filter(i => (i.type === 'task' || i.type === 'event') && i.when === dd && !i.time).map(i => { const dn = i.status === 'done';
+          return html`<${Box} key=${i.id} onClick=${() => c.open(i.id)} onContextMenu=${ev => menu(ev, i.id)} title=${i.name}
+          draggable="true" onDragStart=${ev => { ev.dataTransfer.setData('text/plain', i.id); ev.dataTransfer.effectAllowed = 'move'; }}
+          sx=${{bgcolor: i.type === 'event' ? EVENT : PLAN, color: ON, borderRadius: '4px', pl: .5, pr: .75, fontSize: 12.5, lineHeight: '20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: .5,
+            opacity: dn ? .5 : 1}}>
+          ${tick(dn, i.name, () => check(i.id), 15)}
+          <${Box} component="span" sx=${{flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textDecoration: dn ? 'line-through' : 'none'}}>${i.name}<//><//>`; })}
+      <//>`)}
+    <//>
+    <${Box} ref=${sc} sx=${{maxHeight: n > 1 ? 'max(320px, calc(100vh - 290px))' : 'max(320px, calc(100vh - 190px))', overflowY: 'auto', scrollbarGutter: 'stable', overscrollBehavior: 'contain'}}>
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: cols, position: 'relative', height: (to - from) * H + 12, userSelect: drag ? 'none' : 'auto'}}>
+      <${Box} sx=${{position: 'relative'}}>${[...Array(to - from)].map((_, k) => html`<${Typography} key=${k} variant="caption" color="text.secondary"
+        sx=${{position: 'absolute', top: k * H - 9, right: 10, display: k ? 'block' : 'none', fontSize: 12.5}}>${pad(from + k)}:00<//>`)}<//>
+      ${days.map((dd, di) => html`<${Box} key=${dd} onDragOver=${ev => over(ev, di)} onDragLeave=${ev => !ev.currentTarget.contains(ev.relatedTarget) && setHover(null)} onDrop=${ev => drop(ev, dd)}
+          onPointerDown=${ev => make(ev, di)}
+          sx=${{position: 'relative', borderLeft: 1, borderColor: 'divider',
+          backgroundImage: 'linear-gradient(to bottom, rgba(128,128,128,.2) 1px, transparent 1px)', backgroundSize: '100% ' + H + 'px'}}>
+        ${hover && hover.di === di && hover.m != null ? html`<${Box} sx=${{position: 'absolute', left: 3, right: 3, top: (hover.m - from * 60) / 60 * H + 1.5, height: H / 2 - 3, borderRadius: '4px',
+          border: '2px dashed', borderColor: 'primary.main', bgcolor: 'rgba(144,202,249,.12)', zIndex: 8, pointerEvents: 'none', px: 1, fontSize: 12.5, color: 'primary.main', lineHeight: '22px'}}>${hm(hover.m)}<//>` : null}
+        ${draft && draft.di === di ? html`<${Box} sx=${{position: 'absolute', left: 3, right: 3, top: (draft.a - from * 60) / 60 * H + 1.5, height: (draft.b - draft.a) / 60 * H - 3, borderRadius: '4px',
+          border: '2px solid', borderColor: 'primary.main', bgcolor: 'rgba(144,202,249,.28)', zIndex: 7, pointerEvents: 'none', px: 1, fontSize: 12.5, fontWeight: 500, color: 'primary.main', lineHeight: '20px'}}>${hm(draft.a)} to ${hm(draft.b)}<//>` : null}
+        ${lay(evs.filter(e => e.di === di)).map(e => { const h = Math.max(24, e.min / 60 * H - 3);
+          return html`<${Box} key=${e.id} onPointerDown=${ev => down(ev, e)} onContextMenu=${ev => menu(ev, e.item)} title=${e.name}
+            sx=${{position: 'absolute', top: Math.max(0, (e.start - from * 60) / 60 * H) + 1.5, height: h, left: 'calc(' + e.col * 100 / e.cols + '% + 3px)', width: 'calc(' + 100 / e.cols + '% - 6px)',
+              borderRadius: '4px', px: 1, py: h > 40 ? .75 : .25, overflow: 'hidden', bgcolor: e.bg, color: ON, cursor: drag && drag.id === e.id ? 'grabbing' : 'grab', touchAction: 'none',
+              boxShadow: e.drag ? '0 10px 24px rgba(0,0,0,.5)' : 'inset 0 0 0 1px rgba(0,0,0,.18)', zIndex: e.drag ? 5 : 1 + e.col, opacity: e.drag ? .92 : e.done ? .5 : 1,
+              transition: e.drag ? 'none' : 'box-shadow .15s', '&:hover': {filter: 'brightness(1.06)'}}}>
+            <${Stack} direction="row" alignItems="center" spacing=${.5} sx=${{minWidth: 0}}>
+              ${e.bid ? null : tick(e.done, e.name, () => check(e.item, e.hid, days[e.di]))}
+              <${Typography} noWrap sx=${{flex: 1, minWidth: 0, fontSize: 14, fontWeight: 500, lineHeight: '18px', color: ON, textDecoration: e.done ? 'line-through' : 'none'}}>${e.name}<//><//>
+            ${h > 40 ? html`<${Typography} noWrap sx=${{fontSize: 12.5, lineHeight: '17px', color: 'rgba(0,0,0,.72)'}}>${hm(e.start)} to ${hm(e.start + e.min)}<//>` : null}
+            ${h > 64 ? html`<${Typography} noWrap sx=${{fontSize: 12, lineHeight: '16px', color: 'rgba(0,0,0,.6)'}}>${e.tag}<//>` : null}
+            <${Box} data-h="r" sx=${{position: 'absolute', left: 0, right: 0, bottom: 0, height: 8, cursor: 'ns-resize'}}/>
+          <//>`; })}
+        ${dd === TODAY && nowMin > from * 60 && nowMin < to * 60 ? html`<${Box} sx=${{position: 'absolute', left: -5, right: 0, top: (nowMin - from * 60) / 60 * H, height: 2, bgcolor: '#e57373', zIndex: 9, pointerEvents: 'none',
+          '&::before': {content: '""', position: 'absolute', left: 0, top: -4, width: 10, height: 10, borderRadius: '50%', bgcolor: '#e57373'}}}/>` : null}
+      <//>`)}
+    <//>
+    <//>
+  <//><//>
+  ${draft && !draft.live ? html`<${NewSlot} key=${draft.di + '-' + draft.a + '-' + draft.b} c=${c} draft=${draft} dd=${days[draft.di]} onClose=${() => setDraft(null)}/>` : null}
+  <${Menu} open=${!!ctx} onClose=${() => setCtx(null)} anchorReference="anchorPosition" anchorPosition=${ctx ? {top: ctx.y, left: ctx.x} : undefined} disableRestoreFocus>
+    ${ctx && ctx.it.type === 'event'
+      ? html`<${MenuItem} onClick=${() => asType(ctx.it, 'task')}>${I('task_alt', {mr: 1.5, color: PLAN})}Make it a task<//>`
+      : html`<${MenuItem} onClick=${() => asType(ctx && ctx.it, 'event')}>${I('event', {mr: 1.5, color: EVENT})}Make it an event<//>`}
+    <${MenuItem} onClick=${() => { const id = ctx.it.id; setCtx(null); c.open(id); }}>${I('open_in_new', {mr: 1.5})}Open<//>
+  <//>
+  <//>`;
+}
+
+/* date picker in the style of MUI X DateCalendar */
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function DateField({label, value, onChange, sx}) {
+  const [anchor, setAnchor] = useState(null), [view, setView] = useState(new Date());
+  const show = e => { setAnchor(e.currentTarget); const d = value ? parse(value) : new Date(); setView(new Date(d.getFullYear(), d.getMonth(), 1)); };
+  const pick = v => { onChange(v); setAnchor(null); };
+  const y = view.getFullYear(), mo = view.getMonth(), first = new Date(y, mo, 1), len = new Date(y, mo + 1, 0).getDate();
+  const cells = [...Array(Math.ceil((first.getDay() + len) / 7) * 7)].map((_, k) => addDays(first, k - first.getDay()));
+  const shown = value ? fmtDay(value) + (parse(value).getFullYear() !== new Date().getFullYear() ? ' ' + parse(value).getFullYear() : '') : '';
+  const quick = [['Today', TODAY], ['Tomorrow', day(1)], ['In a week', day(7)]];
+  return html`<${React.Fragment}>
+    <${TextField} size="small" fullWidth label=${label} value=${shown} placeholder="No date" onClick=${show} sx=${sx}
+      InputLabelProps=${{shrink: true}} inputProps=${{readOnly: true, style: {cursor: 'pointer'}, 'aria-haspopup': 'dialog'}}
+      InputProps=${{readOnly: true, endAdornment: html`<${IconButton} size="small" edge="end" aria-label=${'Choose ' + label.toLowerCase()} onClick=${e => { e.stopPropagation(); show({currentTarget: e.currentTarget.closest('.MuiFormControl-root')}); }}>${I('calendar_month')}<//>`}}/>
+    <${Popover} open=${!!anchor} anchorEl=${anchor} onClose=${() => setAnchor(null)} anchorOrigin=${{vertical: 'bottom', horizontal: 'left'}}
+        PaperProps=${{elevation: 8, sx: {mt: .5, p: 1.5, width: 320}}}>
+      <${Stack} direction="row" alignItems="center" sx=${{pl: 1.5, mb: 1}}>
+        <${Typography} fontWeight="500" sx=${{flex: 1}}>${MONTHS[mo]} ${y}<//>
+        <${IconButton} aria-label="Previous month" onClick=${() => setView(new Date(y, mo - 1, 1))}>${I('chevron_left')}<//>
+        <${IconButton} aria-label="Next month" onClick=${() => setView(new Date(y, mo + 1, 1))}>${I('chevron_right')}<//>
+      <//>
+      <${Box} sx=${{display: 'grid', gridTemplateColumns: 'repeat(7, 40px)', justifyContent: 'center', rowGap: .5}}>
+        ${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, k) => html`<${Typography} key=${'w' + k} variant="caption" color="text.secondary" align="center" sx=${{lineHeight: '40px'}}>${d}<//>`)}
+        ${cells.map(d => { const v = iso(d), sel = v === value, out = d.getMonth() !== mo, today = v === TODAY;
+          return html`<${ButtonBase} key=${v} onClick=${() => pick(v)} aria-label=${fmtDay(v) + ' ' + d.getFullYear()} aria-pressed=${sel}
+            sx=${{width: 36, height: 36, m: '0 2px', borderRadius: '50%', fontSize: 14, color: sel ? 'primary.contrastText' : out ? 'text.disabled' : 'text.primary',
+              bgcolor: sel ? 'primary.main' : 'transparent', border: today && !sel ? '1px solid' : 'none', borderColor: 'text.secondary', fontWeight: sel ? 500 : 400,
+              '&:hover': {bgcolor: sel ? 'primary.dark' : 'action.hover'}, '&.Mui-focusVisible': {bgcolor: sel ? 'primary.dark' : 'action.focus'}}}>${d.getDate()}<//>`; })}
+      <//>
+      <${Stack} direction="row" spacing=${.5} sx=${{mt: 1.5, pt: 1, borderTop: 1, borderColor: 'divider'}}>
+        ${quick.map(([l, v]) => html`<${Button} key=${l} size="small" onClick=${() => pick(v)}>${l}<//>`)}
+        <${Box} sx=${{flex: 1}}/>
+        <${Button} size="small" color="inherit" onClick=${() => pick('')} disabled=${!value}>Clear<//>
+      <//>
+    <//>
+  <//>`;
+}
+
+/* pop-out timer: Document Picture-in-Picture (floats on top, any screen); falls back to video PiP, then a popup window */
+const PIP = {mode: null, w: null, cv: null, vid: null, w2: null, cv2: null};
+const PIP_CSS = `*{box-sizing:border-box;margin:0}body{background:#121212;color:#fff;font-family:Roboto,system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:14px 18px;gap:6px;overflow:hidden}
+#k{font-size:12px;font-weight:600;color:#F7941F;letter-spacing:.02em}#t{font-size:46px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.05}#n{font-size:16px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.9)}
+#bar{height:5px;border-radius:3px;background:rgba(247,148,31,.25);overflow:hidden}#bar>i{display:block;height:100%;background:#F7941F}body.over #t{color:#f44336}
+#fl{margin-top:8px;align-self:flex-start;font:600 13px Roboto,system-ui,sans-serif;color:rgba(0,0,0,.87);background:#F7941F;border:0;border-radius:4px;padding:7px 12px;cursor:pointer}#fl:disabled{background:#444;color:#aaa;cursor:default}`;
+function pipSetup(w, float) { const d = w.document; d.title = 'tskmngr timer';
+  const st = d.createElement('style'); st.textContent = PIP_CSS; d.head.appendChild(st);
+  d.body.innerHTML = '<div id="k"></div><div id="t"></div><div id="n"></div><div id="bar"><i></i></div>' + (float ? '<button id="fl">Float on top</button>' : '');
+  if (float) d.getElementById('fl').addEventListener('click', () => pipFloat(w)); }
+/* the popup is a top-level window, so it may float on top even when the app's frame cannot */
+async function pipFloat(w) { const btn = w.document.getElementById('fl');
+  try { if (!w.documentPictureInPicture) throw 0; const pw = await w.documentPictureInPicture.requestWindow({width: 340, height: 150});
+    pipSetup(pw); PIP.w2 = pw; pw.addEventListener('pagehide', () => { if (PIP.w2 === pw) PIP.w2 = null; }); pipDraw(PIP.last); btn.textContent = 'Floating'; btn.disabled = true; return; } catch (e) {}
+  try { const d = w.document, cv = d.createElement('canvas'); cv.width = 640; cv.height = 300; const vid = d.createElement('video'); vid.muted = true; vid.playsInline = true;
+    Object.assign(vid.style, {position: 'fixed', left: 0, bottom: 0, width: '2px', height: '2px', opacity: 0}); d.body.appendChild(vid); vid.srcObject = cv.captureStream();
+    PIP.cv2 = cv; pipDraw(PIP.last); await vid.play().catch(() => {});
+    if (vid.readyState < 1) await new Promise(r => { const t = setTimeout(r, 1500); vid.addEventListener('loadedmetadata', () => { clearTimeout(t); r(); }, {once: true}); pipDraw(PIP.last); });
+    await vid.requestPictureInPicture(); vid.addEventListener('leavepictureinpicture', () => { PIP.cv2 = null; vid.remove(); btn.textContent = 'Float on top'; btn.disabled = false; });
+    btn.textContent = 'Floating'; btn.disabled = true; } catch (e) { PIP.cv2 = null; btn.textContent = 'Your browser will not float this window'; btn.disabled = true; }
+}
+function pipDoc(w, v) { if (!w || w.closed) return; const d = w.document, q = id => d.getElementById(id); if (!q('t')) return;
+  q('k').textContent = v.label; q('t').textContent = v.time; q('n').textContent = v.name; q('bar').style.display = v.pct == null ? 'none' : 'block';
+  if (v.pct != null) q('bar').firstChild.style.width = v.pct + '%'; d.body.classList.toggle('over', !!v.over); d.title = v.time + ' ' + v.name; }
+function pipCanvas(cv, v) { const x = cv.getContext('2d'), W = cv.width, H = cv.height;
+  x.fillStyle = '#121212'; x.fillRect(0, 0, W, H); x.fillStyle = '#F7941F'; x.font = '600 26px Roboto, sans-serif'; x.fillText(v.label, 36, 58);
+  x.fillStyle = v.over ? '#f44336' : '#fff'; x.font = '500 110px Roboto, sans-serif'; x.fillText(v.time, 32, 172);
+  x.fillStyle = 'rgba(255,255,255,.9)'; x.font = '500 34px Roboto, sans-serif'; let n = v.name; while (n.length > 3 && x.measureText(n).width > W - 72) n = n.slice(0, -2); x.fillText(n === v.name ? n : n + '…', 36, 230);
+  if (v.pct != null) { x.fillStyle = 'rgba(247,148,31,.25)'; x.fillRect(36, 258, W - 72, 10); x.fillStyle = '#F7941F'; x.fillRect(36, 258, (W - 72) * v.pct / 100, 10); } }
+function pipDraw(v) {
+  if (!v) return; PIP.last = v;
+  if ((PIP.mode === 'doc' || PIP.mode === 'win') && (!PIP.w || PIP.w.closed)) PIP.mode = null;
+  if (PIP.mode === 'doc' || PIP.mode === 'win') pipDoc(PIP.w, v);
+  if (PIP.mode === 'video' && PIP.cv) pipCanvas(PIP.cv, v);
+  if (PIP.w2) pipDoc(PIP.w2, v);
+  if (PIP.cv2) pipCanvas(PIP.cv2, v);
+}
+setInterval(() => { if (PIP.last && (PIP.cv2 || PIP.mode === 'video')) pipDraw(PIP.last); }, 500);
+const framed = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+
+/* sync: Supabase, one row per item and per block plus one state row; local first, a local change waiting to go up wins */
+/* sync is off only inside claude.ai; other pages that embed the app (Excalidraw) sync after a sign-in inside the embed */
+const inClaude = framed && (() => { const o = [...(location.ancestorOrigins || [])].join(' ') + ' ' + document.referrer + ' ' + location.hostname;
+  return /claude\.ai|claudeusercontent|anthropic/.test(o) || !(location.ancestorOrigins && location.ancestorOrigins.length) && !document.referrer; })();
+const SB = (() => { try { return !inClaude && window.supabase ? supabase.createClient('https://qzxqvymgueqdaaobqrpj.supabase.co', 'sb_publishable_at6vwlXryny7wy3ScZ0HNQ_C29Ymvrj') : null; } catch (e) { return null; } })();
+const SYNC_KEY = 'one-table-sync', TBL = ['items', 'blocks'];
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(y => [y, x[y]])) : x);
+const blankSnap = uid => ({user: uid, items: {}, blocks: {}, state: null, since: null});
+const loadSnap = uid => { try { const x = JSON.parse(localStorage.getItem(SYNC_KEY)); if (x && x.user === uid) return x; } catch (e) {} return blankSnap(uid); };
+const saveSnap = x => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(x)); } catch (e) {} };
+const bid = b => b.id || 'b' + b.day + b.start;
+const rowsOf = st => { const {items, blocks, ...rest} = st;
+  return {items: Object.fromEntries(items.map((d, i) => [d.id, canon([i, d])])), blocks: Object.fromEntries((blocks || []).map((d, i) => [bid(d), canon([i, d])])), state: canon(rest)}; };
+const chunks = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+const syncPush = async (st, snap) => {
+  const cur = rowsOf(st), uid = snap.user, done = [];
+  for (const t of TBL) {
+    const up = [];
+    for (const [id, j] of Object.entries(cur[t])) if (snap[t][id] !== j) { const [pos, data] = JSON.parse(j); up.push({user_id: uid, id, pos, data, deleted: false}); done.push([t, id, j]); }
+    for (const [id, j] of Object.entries(snap[t])) if (!(id in cur[t])) { const [pos, data] = JSON.parse(j); up.push({user_id: uid, id, pos, data, deleted: true}); done.push([t, id, null]); }
+    for (const part of chunks(up, 200)) { const {error} = await SB.from(t).upsert(part); if (error) throw error; }
+  }
+  if (snap.state !== cur.state) { const {error} = await SB.from('app_state').upsert({user_id: uid, data: JSON.parse(cur.state)}); if (error) throw error; }
+  return {cur, done};
+};
+const syncPull = async snap => {
+  const since = snap.since ? new Date(Date.parse(snap.since) - 60000).toISOString() : null, got = {items: [], blocks: [], state: null}; let max = snap.since;
+  for (const t of TBL) for (let from = 0; ; from += 1000) {
+    let q = SB.from(t).select('id,pos,data,deleted,updated_at').order('updated_at').range(from, from + 999); if (since) q = q.gt('updated_at', since);
+    const {data, error} = await q; if (error) throw error;
+    data.forEach(r => { got[t].push(r); if (!max || r.updated_at > max) max = r.updated_at; });
+    if (data.length < 1000) break;
+  }
+  const {data, error} = await SB.from('app_state').select('data').maybeSingle(); if (error) throw error;
+  got.state = data ? canon(data.data) : null;
+  return {got, max};
+};
+/* fold pulled rows into the local state; rows changed here and not yet pushed are kept */
+const syncMerge = (st, got, snap) => {
+  const cur = rowsOf(st), out = {...st}; let changed = false;
+  for (const t of TBL) {
+    const m = new Map((st[t] || []).map((d, i) => [t === 'blocks' ? bid(d) : d.id, [i, d]]));
+    for (const r of got[t]) {
+      if (cur[t][r.id] !== snap[t][r.id]) continue;
+      const j = canon([r.pos, r.data]);
+      if (r.deleted) { if (m.delete(r.id)) changed = true; delete snap[t][r.id]; }
+      else { if (cur[t][r.id] !== j) { m.set(r.id, [r.pos, r.data]); changed = true; } snap[t][r.id] = j; }
+    }
+    out[t] = [...m.values()].sort((a, b) => a[0] - b[0]).map(x => x[1]);
+  }
+  if (got.state && (cur.state === snap.state || snap.state === null)) { if (got.state !== cur.state) { Object.assign(out, JSON.parse(got.state)); changed = true; } snap.state = got.state; }
+  return changed ? out : null;
+};
+async function pipVideo(v) {
+  if (!document.pictureInPictureEnabled) throw new Error('no pip');
+  if (!PIP.vid) { const cv = document.createElement('canvas'); cv.width = 640; cv.height = 300; const vid = document.createElement('video');
+    vid.muted = true; vid.playsInline = true; vid.autoplay = true; Object.assign(vid.style, {position: 'fixed', left: 0, bottom: 0, width: '2px', height: '2px', opacity: 0, pointerEvents: 'none'});
+    document.body.appendChild(vid); vid.srcObject = cv.captureStream(); Object.assign(PIP, {cv, vid});
+    vid.addEventListener('leavepictureinpicture', () => { if (PIP.mode === 'video') PIP.mode = null; }); }
+  PIP.mode = 'video'; pipDraw(v);
+  await PIP.vid.play().catch(() => {});
+  if (PIP.vid.readyState < 1) await new Promise(r => { const t = setTimeout(r, 1500); PIP.vid.addEventListener('loadedmetadata', () => { clearTimeout(t); r(); }, {once: true}); pipDraw(v); });
+  if (document.pictureInPictureElement !== PIP.vid) await PIP.vid.requestPictureInPicture();
+}
+async function pipOpen(v) {
+  if (PIP.mode === 'video' && document.pictureInPictureElement) return 'top';
+  if (PIP.mode === 'doc' && PIP.w && !PIP.w.closed) return 'top';
+  if (PIP.mode === 'win' && PIP.w && !PIP.w.closed) { PIP.w.focus(); return 'win'; }
+  if (!framed && window.documentPictureInPicture) try { const w = await documentPictureInPicture.requestWindow({width: 340, height: 150});
+      pipSetup(w); Object.assign(PIP, {mode: 'doc', w}); w.addEventListener('pagehide', () => { if (PIP.w === w) PIP.mode = null; }); pipDraw(v); return 'top'; } catch (e) {}
+  try { await pipVideo(v); return 'top'; } catch (e) { PIP.mode = null; PIP.err = e && e.message; }
+  try { const w = window.open('', 'one-table-timer', 'popup,width=380,height=220'); if (w) { if (!w.document.getElementById('t')) { w.document.open(); w.document.write('<!DOCTYPE html><html><head></head><body></body></html>'); w.document.close(); }
+      pipSetup(w, true); Object.assign(PIP, {mode: 'win', w}); pipDraw(v); return 'win'; } } catch (e) {}
+  return '';
+}
+
+/* time picker in the style of MUI X DigitalClock: one list, 15 minute steps */
+function TimeField({label, value, onChange, disabled}) {
+  const [anchor, setAnchor] = useState(null), listRef = React.useRef(null);
+  const slots = [...Array(96)].map((_, k) => hm(k * 15));
+  const nd = new Date(), nowSlot = hm(Math.ceil((nd.getHours() * 60 + nd.getMinutes()) / 15) * 15 % 1440);
+  const pick = v => { onChange(v); setAnchor(null); };
+  const entered = () => { const el = listRef.current && listRef.current.querySelector('[data-sel="1"]') || listRef.current && listRef.current.querySelector('[data-t="' + (value ? '' : nowSlot) + '"]');
+    if (el) el.scrollIntoView({block: 'center'}); };
+  return html`<${React.Fragment}>
+    <${TextField} size="small" fullWidth disabled=${!!disabled} label=${label} value=${disabled ? '' : value || ''} placeholder="No time" onClick=${e => !disabled && setAnchor(e.currentTarget)}
+      InputLabelProps=${{shrink: true}} inputProps=${{readOnly: true, style: {cursor: disabled ? 'default' : 'pointer'}, 'aria-haspopup': 'listbox'}}
+      InputProps=${{readOnly: true, endAdornment: html`<${IconButton} size="small" edge="end" disabled=${!!disabled} aria-label=${'Choose ' + label.toLowerCase()} onClick=${e => { e.stopPropagation(); setAnchor(e.currentTarget.closest('.MuiFormControl-root')); }}>${I('schedule')}<//>`}}/>
+    <${Popover} open=${!!anchor} anchorEl=${anchor} onClose=${() => setAnchor(null)} anchorOrigin=${{vertical: 'bottom', horizontal: 'left'}}
+        TransitionProps=${{onEntered: entered}} PaperProps=${{elevation: 8, sx: {mt: .5, width: anchor ? Math.max(180, anchor.offsetWidth) : 200}}}>
+      <${MenuList} ref=${listRef} dense autoFocusItem=${false} sx=${{maxHeight: 280, overflowY: 'auto', py: .5}}>
+        ${slots.map(t => html`<${MenuItem} key=${t} data-t=${t} data-sel=${t === value ? '1' : '0'} selected=${t === value} onClick=${() => pick(t)}
+          sx=${{justifyContent: 'center', mx: .75, borderRadius: 1, fontSize: 15, minHeight: 36,
+            '&.Mui-selected, &.Mui-selected:hover': {bgcolor: 'primary.main', color: 'primary.contrastText'}}}>${t}<//>`)}
+      <//>
+      <${Stack} direction="row" sx=${{p: .75, borderTop: 1, borderColor: 'divider'}}>
+        <${Button} size="small" onClick=${() => pick(nowSlot)}>Next slot, ${nowSlot}<//>
+        <${Box} sx=${{flex: 1}}/>
+        <${Button} size="small" color="inherit" onClick=${() => pick('')} disabled=${!value}>Clear<//>
+      <//>
+    <//>
+  <//>`;
+}
+
+/* views */
+function Inbox({c}) {
+  const [txt, setTxt] = useState(''), list = c.s.items.filter(i => i.status === 'inbox');
+  return html`<${Box}>
+    <${Head} icon="inbox" color="#90caf9" title="Inbox"/>
+    <${Box} component="form" onSubmit=${e => { e.preventDefault(); if (txt.trim()) { c.add({type: 'task', name: txt.trim(), status: 'inbox'}); setTxt(''); } }} sx=${{mb: 2}}>
+      <${TextField} fullWidth placeholder="New item, then Enter" value=${txt} onChange=${e => setTxt(e.target.value)}
+        InputProps=${{startAdornment: I('add', {mr: 1, color: 'text.secondary'})}} inputProps=${{'aria-label': 'New item'}}/>
+    <//>
+    ${list.length ? html`<${Paper} elevation=${1} sx=${{p: .5}}>${list.map(it => html`<${Row} key=${it.id} c=${c} it=${it}/>`)}<//>`
+      : html`<${Typography} color="text.secondary" sx=${{py: 6, textAlign: 'center'}}>Inbox is empty. Everything has a place.<//>`}
+  <//>`;
+}
+
+function Now({c}) {
+  const {s, now} = c, run = s.running, nd = new Date(now), nowMin = nd.getHours() * 60 + nd.getMinutes();
+  const [kind, setKind] = useState('deep'), [len, setLen] = useState(50);
+  const open = s.items.filter(i => isTodayTask(i) && i.status !== 'done');
+  const habs = s.items.filter(h => h.type === 'habit' && (!h.from || h.from <= TODAY) && (h.repeat === 'monthly' || habitOn(h, TODAY)) && !habitDone(h));
+  const timed = [...open, ...habs].filter(i => i.time && toMin(i.time) + (i.type === 'habit' ? +i.dur || 30 : 30) > nowMin).sort((a, b) => a.time.localeCompare(b.time));
+  const top = (s.top && s.top.day === TODAY ? s.top.ids : []).map(id => id && byId(s, id)).filter(i => i && i.status !== 'done' && !timed.includes(i));
+  const queue = [...timed, ...top, ...open.filter(i => !i.time && !top.includes(i)), ...habs.filter(h => !timed.includes(h))];
+  const fx = c.focus && byId(s, c.focus), it = run ? byId(s, run.item) : fx && (fx.type === 'habit' ? !habitDone(fx) : fx.status !== 'done') ? fx : queue[0], after = queue.filter(i => i !== it);
+  if (!it) return html`<${Box}><${Head} icon="play_circle" color="#F7941F" title="Now"/>
+    <${Typography} color="text.secondary" sx=${{mb: 2}}>Nothing left on today's list.<//><${Button} variant="outlined" onClick=${() => c.go('today')}>Open Today<//><//>`;
+  const p = it.project && byId(s, it.project), m = it.milestone && byId(s, it.milestone);
+  const el = run ? elapsed(run, now) : 0, left = run && run.planned ? run.planned * 60000 - el : 0;
+  const tb = s.blocks.filter(b => b.item === it.id), tbm = tb.reduce((n, b) => n + b.min, 0);
+  const when = it.time ? (toMin(it.time) > nowMin ? it.time + ', starts in ' + dur(toMin(it.time) - nowMin) : it.time + ', started ' + dur(nowMin - toMin(it.time)) + ' ago') : 'No time set. Next on today’s list.';
+  const start = mode => c.set(x => ({...x, running: {item: it.id, start: Date.now(), planned: mode === 'play' ? len : null, kind, mode},
+    items: x.items.map(i => i.id === it.id && i.type === 'task' && i.status === 'todo' ? {...i, status: 'started'} : i)}));
+  const big = (icon, label, onClick, color) => html`<${Stack} alignItems="center" spacing=${1}>
+    <${Fab} color=${color} onClick=${onClick} aria-label=${label} sx=${{width: 76, height: 76}}>${I(icon, {fontSize: 38})}<//>
+    <${Typography} variant="body2" fontWeight="600">${label}<//><//>`;
+  return html`<${Box}>
+    <${Head} icon="play_circle" color="#F7941F" title="Now"/>
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: {xs: 'minmax(0,1fr)', lg: 'minmax(0, 760px) minmax(260px, 1fr)'}, gap: 3, alignItems: 'start'}}>
+    <${Box}>
+    <${Card} elevation=${1} sx=${{p: {xs: 2.5, md: 4}}}>
+      <${Stack} direction="row" spacing=${1} alignItems="center" sx=${{color: 'dojo.main', mb: 1}}>
+        ${I(run ? (run.pausedAt ? 'pause_circle' : 'timer') : 'event_upcoming', {fontSize: 18})}
+        <${Typography} variant="body2" fontWeight="600">${run ? (run.pausedAt ? 'Paused' : run.mode === 'timer' ? 'Timer running' : 'Block running') : it.type === 'habit' ? 'Habit' + (p ? ', ' + p.name : '') : p ? p.name : 'Next on the calendar'}<//>
+      <//>
+      <${Typography} variant="h4" component="h2" sx=${{fontFamily: 'Roboto', fontSize: {xs: 26, md: 34}, cursor: 'pointer'}} onClick=${() => c.open(it.id)}>${it.name}<//>
+      <${Typography} color="text.secondary" sx=${{mt: 1}}>${m ? m.name + '. ' : ''}${when}<//>
+      ${tb.length ? html`<${Typography} variant="body2" color="text.secondary" sx=${{mt: .5}}>${tb.length} ${tb.length > 1 ? 'blocks' : 'block'} on this ${it.type === 'habit' ? 'habit' : 'task'} so far, ${dur(tbm)}<//>` : null}
+      ${run ? html`<${Box} sx=${{mt: 3}}>
+          <${Typography} sx=${{fontFamily: 'ui-monospace, Menlo, monospace', fontSize: {xs: 54, md: 72}, fontWeight: 600, lineHeight: 1,
+            color: run.planned && left < 0 ? 'dojo.main' : 'text.primary'}}>${run.planned ? (left < 0 ? '+' : '') + clock(left) : clock(el)}<//>
+          <${Typography} color="text.secondary" sx=${{mt: 1}}>${run.planned ? (left < 0 ? 'Time is up. ' : '') + run.planned + ' minute block' : 'Counting up'}, ${run.kind}<//>
+          ${run.planned ? html`<${LinearProgress} variant="determinate" value=${Math.min(100, el / (run.planned * 600))} color="dojo" sx=${{mt: 2, height: 8, borderRadius: 4}}/>` : null}
+          <${ToggleButtonGroup} size="small" exclusive value=${run.kind} onChange=${(e, v) => v && c.set(x => ({...x, running: {...x.running, kind: v}}))} sx=${{mt: 2.5}}>
+            <${ToggleButton} value="deep">Deep<//><${ToggleButton} value="shallow">Shallow<//><//>
+          <${Stack} direction="row" spacing=${1.5} sx=${{mt: 3, flexWrap: 'wrap', gap: 1.5}} useFlexGap>
+            <${Button} variant="outlined" color="inherit" size="large" startIcon=${I(run.pausedAt ? 'play_arrow' : 'pause')} onClick=${c.pause}>${run.pausedAt ? 'Resume' : 'Pause'}<//>
+            <${Button} variant="contained" color="dojo" size="large" startIcon=${I('check')} onClick=${() => c.finish(false)}>Done<//>
+            <${Button} variant="outlined" size="large" startIcon=${I('task_alt')} onClick=${() => c.finish(true)}>${it.type === 'habit' ? 'Done, habit done today' : 'Done, task finished'}<//>
+            <${Button} size="large" color="inherit" onClick=${() => c.set(x => ({...x, running: null}))}>Stop, don't count it<//>
+            <${Button} size="large" color="inherit" startIcon=${I('picture_in_picture_alt')} onClick=${c.popout}>Pop out<//>
+          <//>
+        <//>`
+      : html`<${Box} sx=${{mt: 3}}>
+          <${Stack} direction="row" spacing=${2} sx=${{flexWrap: 'wrap', gap: 2}} useFlexGap alignItems="center">
+            <${ToggleButtonGroup} size="small" exclusive value=${kind} onChange=${(e, v) => v && setKind(v)} aria-label="Kind of block">
+              <${ToggleButton} value="deep">${I('psychology', {fontSize: 18, mr: .75})}Deep<//><${ToggleButton} value="shallow">${I('bolt', {fontSize: 18, mr: .75})}Shallow<//><//>
+            <${ToggleButtonGroup} size="small" exclusive value=${[15, 25, 50, 90].includes(len) ? len : null} onChange=${(e, v) => v && setLen(v)} aria-label="Length">
+              ${[15, 25, 50, 90].map(v => html`<${ToggleButton} key=${v} value=${v}>${v}m<//>`)}<//>
+            <${TextField} size="small" type="number" label="Minutes" value=${len} onChange=${e => setLen(Math.max(1, Math.min(240, +e.target.value || 1)))} sx=${{width: 100}}/>
+          <//>
+          <${Stack} direction="row" spacing=${4} sx=${{mt: 3.5}}>
+            ${big('play_arrow', 'Play ' + len + 'm', () => start('play'), 'dojo')}
+            ${big('timer', 'Timer', () => start('timer'), 'primary')}
+          <//>
+        <//>`}
+    <//>
+    ${after.length && !run ? html`<${Box} sx=${{mt: 4}}>
+      <${Typography} variant="body2" color="text.secondary" fontWeight="600" sx=${{mb: 1}}>After that<//>
+      <${Paper} elevation=${1} sx=${{p: .5}}>${after.slice(0, 3).map(i => i.type === 'habit' ? html`<${Stack} key=${i.id} direction="row" spacing=${1.5} alignItems="center" onClick=${() => c.open(i.id)}
+        sx=${{px: 1.5, py: 1.25, cursor: 'pointer', borderRadius: 1, '&:hover': {bgcolor: 'action.hover'}}}>${I('local_fire_department', {color: HABIT, fontSize: 20})}
+        <${Typography} sx=${{flex: 1}} noWrap>${i.name}<//><${Typography} variant="body2" color="text.secondary">${i.time || ''}<//><//>` : html`<${Row} key=${i.id} c=${c} it=${i}/>`)}<//><//>` : null}
+    <//>
+    <${Paper} elevation=${1} sx=${{p: 2, position: {lg: 'sticky'}, top: 88}}>
+      <${Stack} direction="row" alignItems="center" sx=${{mb: 1}}>
+        <${Typography} variant="body2" fontWeight="600" sx=${{flex: 1}}>Notes<//>
+        ${s.scratch ? html`<${Tooltip} title="Clear"><${IconButton} size="small" aria-label="Clear notes" onClick=${() => c.set(x => ({...x, scratch: ''}))}>${I('backspace', {fontSize: 18})}<//><//>` : null}
+      <//>
+      <${TextField} multiline fullWidth minRows=${14} placeholder="How to start?" value=${s.scratch || ''} onChange=${e => { const v = e.target.value; c.set(x => ({...x, scratch: v})); }}
+        inputProps=${{'aria-label': 'Notes'}} sx=${{'& .MuiInputBase-root': {alignItems: 'flex-start', fontSize: 15, lineHeight: 1.6}}}/>
+    <//>
+    <//>
+  <//>`;
+}
+
+/* today as a mind map: day > groups > tasks and habits > blocks */
+function DayMap({c, list, habs}) {
+  const s = c.s, L0 = useLink(), box = L0.box, linking = L0.active, tmr = React.useRef(null);
+  const [drag, setDrag] = useState(null), [over, setOver] = useState(null), [edit, setEdit] = useState(null);
+  const [menu, setMenu] = useState(null), [blk, setBlk] = useState(null), [len, setLen] = useState(25), [kind, setKind] = useState('deep');
+  const ix = new Map(s.items.map((i, k) => [i.id, k])), byIx = (a, b) => ix.get(a.id) - ix.get(b.id);
+  const groups = s.items.filter(i => i.type === 'group' && i.when === TODAY), gset = new Set(groups.map(g => g.id));
+  const gOf = i => gset.has(i.group) ? i.group : null;
+  const leaves = [...list, ...habs], kids = gid => leaves.filter(i => gOf(i) === gid).sort(byIx);
+  const top = [...groups, ...leaves.filter(i => !gOf(i))].sort(byIx);
+  const RW = 200, RH = 76, C1 = 260, NW = 270, C2 = C1 + NW + 56, TH = 40, TG = 8, GH = 60, GG = 14;
+  const pos = {}; let y = 0;
+  top.forEach(n => { if (n.type === 'group') { const k = kids(n.id), kh = k.length ? k.length * (TH + TG) - TG : 0, h = Math.max(GH, kh);
+      pos[n.id] = {x: C1, y: y + (h - GH) / 2, h: GH}; k.forEach((t, i) => { pos[t.id] = {x: C2, y: y + (h - kh) / 2 + i * (TH + TG), h: TH, g: n.id}; }); y += h + GG; }
+    else { pos[n.id] = {x: C1, y, h: TH}; y += TH + GG; } });
+  const total = Math.max(y - GG, RH), ry = total / 2 - RH / 2, W = C2 + NW + 260, H = total + 8;
+  const mid = id => id === 'root' ? {x: RW, y: ry + RH / 2} : {x: pos[id].x + NW, y: pos[id].y + pos[id].h / 2};
+  const curve = (x1, y1, x2, y2, col, dash) => html`<path d=${'M' + x1 + ' ' + y1 + ' C' + (x1 + 36) + ' ' + y1 + ' ' + (x2 - 36) + ' ' + y2 + ' ' + x2 + ' ' + y2}
+    fill="none" stroke=${col || 'currentColor'} stroke-width="2" stroke-dasharray=${dash ? '5 4' : null}/>`;
+  const isDone = i => i.type === 'habit' ? habitDone(i) : i.type === 'group' ? kids(i.id).length > 0 && kids(i.id).every(isDone) : i.status === 'done';
+  // create
+  const newTask = gid => { const id = c.add({type: 'task', name: '', status: 'todo', when: TODAY, ...(gid ? {group: gid} : {})}); setEdit(id); };
+  const newGroup = () => { const id = c.add({type: 'group', name: '', when: TODAY}); setEdit(id); };
+  const done = (it, v, k) => { const n = v.trim(); setEdit(null);
+    if (!n) { if (!it.name || it.type === 'group') c.set(x => ({...x, items: x.items.filter(i => i.id !== it.id)})); return; }
+    if (n !== it.name) c.upd(it.id, {name: n});
+    if (k === 'Enter') it.type === 'group' ? newTask(it.id) : newTask(gOf(it)); };
+  // drag from a handle
+  const handle = id => html`<${Dot} color=${id === 'root' ? 'dojo.main' : 'primary.main'}
+    title=${id === 'root' ? 'Drag out to add a task or a group' : (byId(s, id) || {}).type === 'group' ? 'Drag out to start a block or add a task' : 'Drag out to start a block'}
+    onDown=${e => { const a = mid(id); L0.begin(e, {x: a.x + 6, y: a.y}, ev => id === 'root' || byId(s, id).type === 'group' ? setMenu({left: ev.clientX, top: ev.clientY, from: id}) : setBlk(id)); }}/>`;
+  // reorder and group with HTML drag and drop
+  const src = (it, k) => ({draggable: edit !== it.id, onDragStart: e => { if (linking.current) { e.preventDefault(); return; } e.dataTransfer.setData('text/plain', it.id); e.dataTransfer.effectAllowed = 'move'; setDrag({id: it.id, k}); },
+    onDragEnd: () => { setDrag(null); setOver(null); }});
+  const tgt = (key, ok, run) => ({onDragOver: e => { if (!drag || !ok(drag)) return; e.preventDefault(); e.stopPropagation(); if (over !== key) setOver(key); },
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(o => o === key ? null : o); },
+    onDrop: e => { e.preventDefault(); e.stopPropagation(); setOver(null); if (drag && ok(drag)) run(drag); setDrag(null); }});
+  const bar = html`<${Box} sx=${{position: 'absolute', left: 0, right: 0, top: -6, height: 3, borderRadius: 2, bgcolor: 'primary.main'}}/>`;
+  const click = it => ({onClick: () => { clearTimeout(tmr.current); if (it.type === 'group') { setEdit(it.id); return; } tmr.current = setTimeout(() => c.open(it.id), 230); },
+    onDoubleClick: () => { clearTimeout(tmr.current); setEdit(it.id); }});
+  // block chips after a node
+  const chips = id => { const bs = s.blocks.filter(b => b.day === TODAY && b.item === id), run = s.running && s.running.item === id, p = pos[id];
+    if (!bs.length && !run && blk !== id) return null;
+    return html`<${Stack} key=${'b' + id} direction="row" spacing=${.75} alignItems="center" sx=${{position: 'absolute', left: p.x + NW + 18, top: p.y + p.h / 2 - 12, height: 24}}>
+      ${bs.slice(-3).map(b => html`<${Chip} key=${b.id} size="small" label=${b.min + 'm ' + b.kind} sx=${{bgcolor: KIND[b.kind], color: ON, fontWeight: 500}}/>`)}
+      ${bs.length > 3 ? html`<${Typography} variant="caption" color="text.secondary">+${bs.length - 3}<//>` : null}
+      ${run ? html`<${Chip} size="small" color="dojo" icon=${I('timer', {fontSize: 16})} label=${clock(s.running.planned ? s.running.planned * 60000 - elapsed(s.running, c.now) : elapsed(s.running, c.now))}
+        onClick=${() => c.go('now')} sx=${{fontWeight: 600, fontVariantNumeric: 'tabular-nums'}}/>` : null}
+      ${blk === id && !run ? html`<${Chip} size="small" variant="outlined" color="primary" label=${len + 'm ' + kind} sx=${{borderStyle: 'dashed'}}/>` : null}
+    <//>`; };
+  const node = it => { const p = pos[it.id], g = it.type === 'group', d = isDone(it), k = 'n:' + it.id, hab = it.type === 'habit';
+    const t = g ? tgt(k, dr => dr.id !== it.id, dr => byId(s, dr.id).type === 'group' ? c.move(dr.id, it.id) : c.move(dr.id, null, {group: it.id}))
+      : tgt(k, dr => dr.id !== it.id && !(byId(s, dr.id).type === 'group' && p.g), dr => c.move(dr.id, it.id, byId(s, dr.id).type === 'group' ? {} : {group: p.g || null}));
+    const dragKind = drag && byId(s, drag.id) && byId(s, drag.id).type;
+    const into = g && over === k && dragKind && dragKind !== 'group';
+    const kk = g ? kids(it.id) : [];
+    return html`<${Paper} key=${it.id} elevation=${g ? 3 : 2} ...${click(it)} ...${src(it)} ...${t}
+        sx=${{position: 'absolute', left: p.x, top: p.y, width: NW, height: p.h, borderRadius: 1, display: 'flex', alignItems: 'center', gap: 1, pl: g ? 1.5 : .5, pr: 2,
+          cursor: 'pointer', userSelect: 'none', opacity: drag && drag.id === it.id ? .4 : 1, '&:hover': {boxShadow: 6},
+          borderLeft: g ? '4px solid' : 'none', borderColor: g ? (d ? 'success.main' : 'secondary.main') : undefined,
+          outline: into || blk === it.id ? '2px solid' : 'none', outlineColor: 'primary.main'}}>
+      ${over === k && !into ? bar : null}
+      ${g ? I(d ? 'check_circle' : 'folder', {fontSize: 19, color: d ? 'success.main' : 'secondary.main'})
+        : html`<${IconButton} size="small" aria-label=${d ? 'Mark not done' : 'Mark done'} onClick=${e => { e.stopPropagation(); hab ? markHabit(c, it) : c.toggle(it); }}
+            sx=${{p: .25, color: d ? 'success.main' : 'text.secondary'}}>${I(d ? 'check_circle' : 'radio_button_unchecked', {fontSize: 20})}<//>`}
+      <${Box} sx=${{flex: 1, minWidth: 0}}>
+        <${Box} sx=${{fontSize: g ? 14.5 : 14, fontWeight: g ? 600 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            color: d && !g ? 'text.secondary' : 'text.primary', textDecoration: d && !g ? 'line-through' : 'none'}}>
+          ${edit === it.id ? html`<${NodeInput} init=${it.name} onDone=${(v, kk2) => done(it, v, kk2)}/>` : it.name || ' '}<//>
+        ${g ? html`<${Typography} variant="caption" color="text.secondary" component="div" noWrap>${kk.length ? kk.filter(isDone).length + ' of ' + kk.length + ' done' : 'Drag tasks or habits here'}<//>` : null}
+      <//>
+      ${hab ? I('local_fire_department', {fontSize: 17, color: d ? 'text.disabled' : 'dojo.main'}) : null}
+      ${!g && it.time ? html`<${Typography} variant="caption" color="text.secondary">${it.time}<//>` : null}
+      ${it.pts ? html`<${Box} sx=${{fontSize: 12, fontWeight: 600, px: .75, borderRadius: 2, bgcolor: 'action.selected', color: 'text.secondary'}}>${it.pts}<//>` : null}
+      ${handle(it.id)}
+    <//>`; };
+  const nTasks = list.length, dTasks = list.filter(i => i.status === 'done').length, dHabs = habs.filter(habitDone).length;
+  const bi = blk && byId(c.all, blk), busy = !!s.running;
+  const startBlock = mode => { const id = blk; c.set(x => ({...x, running: {item: id, start: Date.now(), planned: mode === 'play' ? len : null, kind, mode},
+    items: x.items.map(i => i.id === id && i.status === 'todo' ? {...i, status: 'started'} : i)})); setBlk(null); };
+  return html`<${Box}>
+    <${Paper} elevation=${1} sx=${{overflow: 'auto', p: 3}}>
+      <${Box} ref=${box} sx=${{position: 'relative', width: W, height: H, color: 'text.disabled'}}>
+        <svg width=${W} height=${H} style=${{position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible'}}>
+          ${top.map(n => curve(RW, ry + RH / 2, C1, pos[n.id].y + pos[n.id].h / 2, isDone(n) ? '#66bb6a' : null))}
+          ${groups.map(gr => kids(gr.id).map(t => curve(C1 + NW, pos[gr.id].y + GH / 2, C2, pos[t.id].y + TH / 2, isDone(t) ? '#66bb6a' : null)))}
+          ${L0.path}
+        </svg>
+        <${Paper} elevation=${4} ...${tgt('root', dr => !!gOf(byId(s, dr.id) || {}), dr => c.move(dr.id, null, {group: null}))}
+          sx=${{position: 'absolute', left: 0, top: ry, width: RW, height: RH, borderRadius: 1, px: 1.75, display: 'flex', flexDirection: 'column', justifyContent: 'center',
+            borderLeft: '4px solid', borderColor: 'dojo.main', outline: over === 'root' ? '2px solid' : 'none', outlineColor: 'primary.main'}}>
+          <${Typography} fontWeight="700">${DOW[new Date().getDay()]} ${new Date().getDate()} ${MON[new Date().getMonth()]}<//>
+          <${Typography} variant="caption" color="text.secondary">${dTasks} of ${nTasks}${tasksN(nTasks)}, ${dHabs} of ${habs.length} habits<//>
+          ${handle('root')}
+        <//>
+        ${top.map(node)}${groups.map(gr => kids(gr.id).map(node))}
+        ${[...top, ...groups.flatMap(gr => kids(gr.id))].map(n => chips(n.id))}
+      <//>
+    <//>
+    <${Menu} open=${!!menu} onClose=${() => setMenu(null)} disableRestoreFocus anchorReference="anchorPosition" anchorPosition=${menu || {top: 0, left: 0}}>
+      ${menu && menu.from !== 'root' ? html`<${MenuItem} onClick=${() => { const f = menu.from; setMenu(null); setBlk(f); }}>${I('play_arrow', {mr: 1.5, color: 'dojo.main'})}Start a block<//>` : null}
+      <${MenuItem} onClick=${() => { const f = menu.from; setMenu(null); newTask(f === 'root' ? null : f); }}>${I('add_task', {mr: 1.5, color: 'success.main'})}${menu && menu.from !== 'root' ? 'New task in this group' : 'New task'}<//>
+      ${menu && menu.from === 'root' ? html`<${MenuItem} onClick=${() => { setMenu(null); newGroup(); }}>${I('create_new_folder', {mr: 1.5, color: 'secondary.main'})}New group<//>` : null}
+    <//>
+    <${Drawer} anchor="right" open=${!!bi} onClose=${() => setBlk(null)} sx=${{zIndex: t => t.zIndex.modal}} PaperProps=${{sx: {width: {xs: '100%', sm: 380}}}}>
+      ${bi ? html`<${Toolbar} sx=${{gap: 1}}><${Typography} fontWeight="600" sx=${{flex: 1}}>Start a block<//>
+          <${IconButton} aria-label="Close" onClick=${() => setBlk(null)}>${I('close')}<//><//>
+        <${Box} sx=${{px: 3, pb: 3}}>
+          <${Typography} variant="caption" color="text.secondary">${bi.type === 'group' ? 'Group' : bi.type === 'habit' ? 'Habit' : 'Task'}<//>
+          <${Typography} variant="h6" sx=${{lineHeight: 1.3, mb: bi.type === 'group' ? .5 : 2}}>${bi.name}<//>
+          ${bi.type === 'group' ? html`<${Typography} variant="body2" color="text.secondary" sx=${{mb: 2}}>${kids(bi.id).map(t => t.name).join(', ') || 'No tasks in it yet'}<//>` : null}
+          <${Typography} variant="body2" fontWeight="600" sx=${{mb: 1}}>Length<//>
+          <${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1, mb: 1.5}} useFlexGap>
+            ${[15, 25, 50, 90].map(m => html`<${Chip} key=${m} label=${m + 'm'} clickable color=${len === m ? 'primary' : 'default'} variant=${len === m ? 'filled' : 'outlined'} onClick=${() => setLen(m)}/>`)}
+            <${TextField} size="small" type="number" label="Minutes" value=${len} onChange=${e => setLen(Math.max(1, Math.min(240, +e.target.value || 1)))} sx=${{width: 100}}/>
+          <//>
+          <${Typography} variant="body2" fontWeight="600" sx=${{mb: 1}}>Kind<//>
+          <${Stack} direction="row" spacing=${1} sx=${{mb: 3}}>
+            ${['deep', 'shallow'].map(k => html`<${Chip} key=${k} label=${k === 'deep' ? 'Deep' : 'Shallow'} clickable icon=${I(k === 'deep' ? 'psychology' : 'bolt', {fontSize: 18})}
+              onClick=${() => setKind(k)} sx=${kind === k ? {bgcolor: KIND[k], color: ON, '& .MuiChip-icon': {color: ON}, '&:hover': {bgcolor: KIND[k]}} : {}} variant=${kind === k ? 'filled' : 'outlined'}/>`)}<//>
+          ${busy ? html`<${Alert} severity="info" sx=${{mb: 2}} action=${html`<${Button} color="inherit" size="small" onClick=${() => { setBlk(null); c.go('now'); }}>Open Now<//>`}>
+              A block is running on ${(byId(c.all, s.running.item) || {}).name || 'something'}. Finish it first.<//>` : null}
+          <${Stack} direction="row" spacing=${1.5}>
+            <${Button} variant="contained" color="dojo" size="large" startIcon=${I('play_arrow')} disabled=${busy} onClick=${() => startBlock('play')}>Play ${len}m<//>
+            <${Button} variant="outlined" size="large" startIcon=${I('timer')} disabled=${busy} onClick=${() => startBlock('timer')}>Timer<//>
+          <//>
+          ${(() => { const bs = s.blocks.filter(b => b.day === TODAY && b.item === bi.id); return bs.length ? html`<${Box} sx=${{mt: 3}}>
+            <${Typography} variant="body2" fontWeight="600" sx=${{mb: 1}}>Blocks today<//>
+            <${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1}} useFlexGap>${bs.map(b => html`<${Chip} key=${b.id} size="small" label=${b.start + ', ' + b.min + 'm ' + b.kind} sx=${{bgcolor: KIND[b.kind], color: ON}}/>`)}<//><//>` : null; })()}
+        <//>` : null}
+    <//>
+  <//>`;
+}
+
+function Today({c}) {
+  /* the arrows step to other days: that day's tasks, habits and calendar; the top 3 and the mind map are for today only */
+  const {s} = c, [off, setOff] = useState(0), dd = day(off), cur = off === 0;
+  const doneOn = i => i.status === 'done' && i.doneAt && iso(new Date(i.doneAt)) === dd;
+  const list = s.items.filter(cur ? isTodayTask : i => i.type === 'task' && i.status !== 'inbox' && (i.when === dd || doneOn(i))).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+  const [txt, setTxt] = useState(''), [over, setOver] = useState(-1);
+  const hDone = h => cur ? habitDone(h) : (h.log || []).some(x => periodKey(x, h.repeat) === periodKey(dd, h.repeat));
+  const hTog = h => cur ? markHabit(c, h) : c.upd(h.id, x => ({log: hDone(x) ? (x.log || []).filter(y => periodKey(y, x.repeat) !== periodKey(dd, x.repeat)) : [...(x.log || []), dd]}));
+  const habs = s.items.filter(h => h.type === 'habit' && (!h.from || h.from <= dd) && (h.repeat === 'daily' ? true : h.repeat === 'weekly' ? habitOn(h, dd)
+      : cur ? !habitDone(h) || (h.log || []).includes(TODAY) : habitOn(h, dd) || (h.log || []).includes(dd)))
+    .sort((a, b) => hDone(a) - hDone(b) || ['daily', 'weekly', 'monthly'].indexOf(a.repeat) - ['daily', 'weekly', 'monthly'].indexOf(b.repeat));
+  const ids = s.top && s.top.day === TODAY ? s.top.ids : [null, null, null];
+  const setTop = f => c.set(x => ({...x, top: {day: TODAY, ids: f(x.top && x.top.day === TODAY ? [...x.top.ids] : [null, null, null])}}));
+  const put = (id, k) => setTop(a => { const from = a.indexOf(id); if (from >= 0) a[from] = a[k]; else if (k < 0) { k = a.indexOf(null); if (k < 0) return a; } a[k] = id; return a; });
+  const done = list.filter(i => i.status === 'done').length;
+  const blocked = s.blocks.filter(b => b.day === dd).reduce((n, b) => n + b.min, 0);
+  const [mode, setModeS] = useState(() => localStorage.getItem('one-table-dmode') || 'list'), setMode = v => { setModeS(v); localStorage.setItem('one-table-dmode', v); };
+  return html`<${Box}>
+    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 3}}>
+      <${Box} sx=${{color: cur ? '#f6c343' : 'text.secondary', display: 'flex'}}>${I(cur ? 'star' : 'calendar_today', {fontSize: 30})}<//>
+      <${Box} sx=${{flex: 1, minWidth: 0}}>
+        <${Stack} direction="row" alignItems="center" spacing=${.5}>
+          <${Typography} variant="h4" component="h1" noWrap sx=${{mr: .5, fontSize: {xs: 28, sm: 34}}}>${cur ? 'Today' : fmtDay(dd)}<//>
+          <${Tooltip} title="Previous day"><${IconButton} aria-label="Previous day" onClick=${() => setOff(off - 1)}>${I('chevron_left')}<//><//>
+          <${Tooltip} title="Next day"><${IconButton} aria-label="Next day" onClick=${() => setOff(off + 1)}>${I('chevron_right')}<//><//>
+          ${cur ? null : html`<${Button} size="small" onClick=${() => setOff(0)}>Today<//>`}
+        <//>
+        <${Typography} variant="body2" color="text.secondary" sx=${{mt: .25, visibility: Math.abs(off) <= 1 ? 'visible' : 'hidden'}}>${DOW[parse(dd).getDay()] + ' ' + parse(dd).getDate() + ' ' + MON[parse(dd).getMonth()]}<//>
+      <//>
+      ${cur ? html`<${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && setMode(v)} sx=${{flex: 'none'}}>
+        <${ToggleButton} value="list" aria-label="List">${I('view_agenda', {fontSize: 18, mr: {xs: 0, sm: .75}})}<${Box} component="span" sx=${{display: {xs: 'none', sm: 'inline'}}}>List<//><//>
+        <${ToggleButton} value="map" aria-label="Mind map">${I('account_tree', {fontSize: 18, mr: {xs: 0, sm: .75}})}<${Box} component="span" sx=${{display: {xs: 'none', sm: 'inline'}}}>Mind map<//><//><//>` : null}
+    <//>
+    ${cur ? html`<${Box} sx=${{display: 'grid', gridTemplateColumns: {xs: 'minmax(0,1fr)', sm: 'repeat(3, minmax(0,1fr))'}, gap: 1.5, mb: 3, alignItems: 'start'}}>
+      ${ids.map((id, k) => { const it = id && byId(s, id);
+        return html`<${Card} key=${k} variant="outlined" onDragOver=${e => { e.preventDefault(); setOver(k); }} onDragLeave=${() => setOver(-1)}
+            onDrop=${e => { e.preventDefault(); setOver(-1); const d = e.dataTransfer.getData('text/plain'); if (d && byId(s, d)) put(d, k); }}
+            draggable=${!!it} onDragStart=${e => it && e.dataTransfer.setData('text/plain', it.id)}
+            sx=${{p: it ? 2 : 1, px: it ? 2 : 1.25, borderStyle: it ? 'solid' : 'dashed', borderWidth: over === k ? 2 : 1,
+              borderColor: over === k ? 'dojo.main' : 'divider', display: 'flex', flexDirection: 'column', gap: .75}}>
+          <${Stack} direction="row" alignItems="center" spacing=${1}>
+            <${Box} sx=${{width: 24, height: 24, borderRadius: '50%', bgcolor: it ? 'dojo.main' : 'action.selected', color: it ? 'dojo.contrastText' : 'text.secondary',
+              display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 700}}>${k + 1}<//>
+            <${Typography} variant="body2" color=${it ? 'text.secondary' : 'text.disabled'} sx=${{flex: 1}}>${it ? ((it.project && (byId(s, it.project) || {}).name) || 'Priority ' + (k + 1)) : 'Priority ' + (k + 1)}<//>
+            ${it ? html`<${IconButton} size="small" aria-label="Take out of the top 3" onClick=${() => setTop(a => { a[k] = null; return a; })}>${I('close', {fontSize: 18})}<//>` : null}
+          <//>
+          ${it ? html`<${Typography} fontWeight="600" sx=${{cursor: 'pointer', textDecoration: it.status === 'done' ? 'line-through' : 'none'}} onClick=${() => c.open(it.id)}>${it.name}<//>
+            <${Box} sx=${{mt: 'auto'}}><${Button} size="small" variant="contained" startIcon=${I('play_arrow')} disabled=${it.status === 'done'}
+              onClick=${() => { c.setFocus(it.id); c.go('now'); }}>Start<//><//>`
+          : null}
+        <//>`; })}
+    <//>` : null}
+    ${mode === 'map' && cur ? html`<${DayMap} c=${c} list=${list} habs=${habs}/><${Box} sx=${{mt: 3}}><${Cal} c=${c} days=${[TODAY]} from=${6} to=${23}/><//>` : html`
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: {xs: 'minmax(0,1fr)', md: 'minmax(0,1fr) minmax(0,1fr)'}, gap: 3}}>
+      <${Box}>
+        <${Stack} direction="row" spacing=${2} sx=${{mb: 1}}>
+          <${Typography} variant="body2" fontWeight="600">${done} of ${list.length} tasks done<//>
+          <${Typography} variant="body2" color="text.secondary">${dur(blocked)} in blocks${cur ? ' today' : ''}<//>
+        <//>
+        <${LinearProgress} variant="determinate" value=${list.length ? 100 * done / list.length : 0} sx=${{height: 6, borderRadius: 3, mb: 2}}/>
+        <${Paper} elevation=${1} sx=${{p: .5}}>
+          ${list.map(it => html`<${Row} key=${it.id} c=${c} it=${it} noDate=${!cur} pin=${!cur || ids.includes(it.id) ? null : id => put(id, -1)}/>`)}
+          <${Box} component="form" sx=${{px: 1, py: .5}} onSubmit=${e => { e.preventDefault(); if (txt.trim()) { c.add({type: 'task', name: txt.trim(), status: 'todo', when: dd}); setTxt(''); } }}>
+            <${TextField} fullWidth variant="standard" placeholder=${'Add to ' + (Math.abs(off) <= 1 ? fmtDay(dd).toLowerCase() : fmtDay(dd))} value=${txt} onChange=${e => setTxt(e.target.value)} InputProps=${{disableUnderline: true}} inputProps=${{'aria-label': 'Add a task'}}/>
+          <//>
+        <//>
+        ${habs.length ? html`<${Stack} direction="row" spacing=${2} sx=${{mt: 3, mb: 1}}>
+            <${Typography} variant="body2" fontWeight="600">Habits<//>
+            <${Typography} variant="body2" color="text.secondary">${habs.filter(hDone).length} of ${habs.length} done<//><//>
+          <${Paper} elevation=${1} sx=${{p: .5}}>${habs.map(h => { const d = hDone(h), p = h.project && byId(s, h.project), st = streak(h);
+            return html`<${Box} key=${h.id} draggable="true" onDragStart=${e => e.dataTransfer.setData('text/plain', h.id)} onClick=${() => c.open(h.id)} sx=${{display: 'flex', alignItems: 'center', gap: 1, pr: 1.5, borderRadius: 1, cursor: 'pointer', '&:hover': {bgcolor: 'action.hover'}}}>
+              <${Checkbox} checked=${d} disabled=${dd > TODAY} onClick=${e => e.stopPropagation()} onChange=${() => hTog(h)} icon=${I('radio_button_unchecked')} checkedIcon=${I('check_circle')}
+                color="success" inputProps=${{'aria-label': 'Done ' + (h.repeat === 'monthly' ? 'this month' : 'today')}}/>
+              <${Box} sx=${{flex: 1, minWidth: 0, py: .75}}>
+                <${Typography} noWrap sx=${{color: d ? 'text.disabled' : 'text.primary', textDecoration: d ? 'line-through' : 'none'}}>${h.name}<//>
+                <${Typography} variant="caption" color="text.secondary" noWrap component="div">${[h.time ? h.time : '', h.repeat === 'monthly' ? 'Once this month' : '', p ? p.name : ''].filter(Boolean).join(', ')}<//>
+              <//>
+              <${Stack} direction="row" spacing=${.5} alignItems="center" sx=${{color: st ? 'dojo.main' : 'text.disabled'}}>${I('local_fire_department', {fontSize: 18})}
+                <${Typography} variant="body2" fontWeight="500">${st}<//><//>
+            <//>`; })}<//>` : null}
+      <//>
+      <${Box} sx=${{position: {md: 'sticky'}, top: 88, alignSelf: 'start', minWidth: 0}}><${Cal} c=${c} days=${[dd]} from=${6} to=${23}/><//>
+    <//>`}
+  <//>`;
+}
+
+function WeekHabits({c, days}) {
+  const hs = c.s.items.filter(i => i.type === 'habit');
+  if (!hs.length) return null;
+  const tog = (h, d) => c.upd(h.id, x => ({log: (x.log || []).includes(d) ? x.log.filter(y => y !== d) : [...(x.log || []), d]}));
+  const cols = 'minmax(96px, 1fr) repeat(7, 30px) 40px';
+  return html`<${Paper} elevation=${1} sx=${{p: 2, overflowX: 'auto'}}>
+    <${Stack} direction="row" spacing=${1} alignItems="center" sx=${{mb: 1.5}}>${I('local_fire_department', {color: 'dojo.main'})}<${Typography} fontWeight="500">Habits this week<//><//>
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: cols, columnGap: .625, rowGap: .625, alignItems: 'center', minWidth: 360}}>
+      <span></span>
+      ${days.map(d => html`<${Typography} key=${d} variant="caption" align="center" color=${d === TODAY ? 'primary' : 'text.secondary'} sx=${{lineHeight: 1.2}}>${DOW[parse(d).getDay()].slice(0, 2)}<br/>${parse(d).getDate()}<//>`)}
+      <span></span>
+      ${hs.map(h => { const n = days.filter(d => (h.log || []).includes(d)).length, goal = h.repeat !== 'monthly' ? days.filter(d => d <= TODAY && habitOn(h, d)).length : 1;
+        return html`<${React.Fragment} key=${h.id}>
+          <${Typography} variant="body2" noWrap onClick=${() => c.open(h.id)} sx=${{cursor: 'pointer'}}>${h.name}<//>
+          ${days.map(d => { const on = (h.log || []).includes(d), fut = d > TODAY || (h.repeat !== 'monthly' ? !habitOn(h, d) : !!(h.from && d < h.from));
+            return html`<${Box} key=${d} component="button" disabled=${fut} aria-label=${h.name + ', ' + fmtDay(d) + (on ? ', done' : '')} aria-pressed=${on} onClick=${() => tog(h, d)}
+              sx=${{width: 30, height: 24, p: 0, border: 0, borderRadius: '4px', cursor: fut ? 'default' : 'pointer', font: 'inherit',
+                bgcolor: on ? 'dojo.main' : fut ? 'transparent' : 'action.selected', outline: fut ? '1px dashed' : 'none', outlineColor: 'divider', outlineOffset: '-1px',
+                boxShadow: d === TODAY ? t => '0 0 0 2px ' + t.palette.primary.main : 'none', '&:hover': fut ? {} : {filter: 'brightness(1.2)'}}}/>`; })}
+          <${Typography} variant="body2" align="right" color=${goal && n >= goal ? 'success.main' : 'text.secondary'}>${goal ? Math.min(n, goal) + '/' + goal : ''}<//>
+        <//>`; })}
+    <//>
+  <//>`;
+}
+
+function Reminders({c}) {
+  const [n, setN] = useState(''), [d, setD] = useState(TODAY), [t, setT] = useState(''), [r, setR] = useState(''), [showPast, setShowPast] = useState(false);
+  const list = c.s.items.filter(i => i.reminder), key = i => (i.when || '9999') + (i.time || '99');
+  const up = list.filter(i => !i.when || i.when >= TODAY || i.repeat).sort((a, b) => key(a).localeCompare(key(b)));
+  const past = list.filter(i => i.when && i.when < TODAY && !i.repeat).sort((a, b) => key(b).localeCompare(key(a)));
+  const addIt = e => { e.preventDefault(); if (!n.trim()) return; const w = d || TODAY;
+    c.add({type: 'event', reminder: true, name: n.trim(), status: 'todo', when: w, start: w, ...(t ? {time: t, dur: 15} : {}), ...(r ? {repeat: r} : {})}); setN(''); setT(''); setR(''); setD(TODAY); };
+  const away = w => { const k = Math.round((parse(w) - parse(TODAY)) / 864e5); return k === 0 ? 'today' : k === 1 ? 'tomorrow' : k === -1 ? 'yesterday' : k > 0 ? 'in ' + k + ' days' : -k + ' days ago'; };
+  const yr = w => w && parse(w).getFullYear() !== new Date().getFullYear() ? ' ' + parse(w).getFullYear() : '';
+  const line = i => { const dn = i.status === 'done';
+    return html`<${Box} key=${i.id} onClick=${() => c.open(i.id)} sx=${{display: 'flex', alignItems: 'center', gap: 1, pr: 1.5, borderRadius: 1, cursor: 'pointer', '&:hover': {bgcolor: 'action.hover'}}}>
+      <${Checkbox} checked=${dn} onClick=${e => e.stopPropagation()} onChange=${() => c.toggle(i)} icon=${I('radio_button_unchecked')} checkedIcon=${I('check_circle')} color="success" inputProps=${{'aria-label': 'Done'}}/>
+      <${Box} sx=${{flex: 1, minWidth: 0, py: .75}}>
+        <${Typography} noWrap sx=${{textDecoration: dn ? 'line-through' : 'none', color: dn ? 'text.disabled' : 'text.primary'}}>${i.name}<//>
+        <${Typography} variant="caption" color="text.secondary" noWrap component="div">${fmtDay(i.when)}${yr(i.when)}${i.time ? ', ' + i.time : ''}${i.repeat ? ', ' + (REP[i.repeat] || i.repeat) : ''}<//>
+      <//>
+      ${i.repeat ? I('repeat', {fontSize: 18, color: 'text.secondary'}) : null}
+      <${Typography} variant="body2" color=${i.when === TODAY ? 'warning.main' : 'text.secondary'} sx=${{whiteSpace: 'nowrap', minWidth: 76, textAlign: 'right'}}>${i.when ? away(i.when) : ''}<//>
+    <//>`; };
+  return html`<${Box}>
+    <${Head} icon="notifications" color="#ffb74d" title="Reminders"/>
+    <${Paper} component="form" elevation=${1} onSubmit=${addIt} sx=${{p: 2, mb: 3, display: 'grid', gap: 1.5, gridTemplateColumns: {xs: '1fr 1fr', md: 'minmax(0,2fr) 1fr 1fr 1fr auto'}, alignItems: 'center'}}>
+      <${TextField} size="small" label="Remind me of" value=${n} onChange=${e => setN(e.target.value)} sx=${{gridColumn: {xs: '1 / -1', md: 'auto'}}}/>
+      <${DateField} label="Date" value=${d} onChange=${setD}/>
+      <${TimeField} label="Time" value=${t} onChange=${setT}/>
+      <${TextField} select size="small" label="Repeats" value=${r} onChange=${e => setR(e.target.value)} SelectProps=${{displayEmpty: true}} InputLabelProps=${{shrink: true}}>
+        ${[['', 'Never'], ['daily', 'Every day'], ['weekly', 'Every week'], ['monthly', 'Every month'], ['yearly', 'Every year']].map(([v, l]) => html`<${MenuItem} key=${v} value=${v}>${l}<//>`)}<//>
+      <${Button} type="submit" variant="contained" disabled=${!n.trim()} startIcon=${I('add')} sx=${{height: 40}}>Add<//>
+    <//>
+    ${up.length ? html`<${Paper} elevation=${1} sx=${{p: .5}}>${up.map(line)}<//>` : null}
+    ${past.length ? html`<${Box} sx=${{mt: 3}}>
+      <${Stack} direction="row" alignItems="center" spacing=${1} onClick=${() => setShowPast(!showPast)} sx=${{cursor: 'pointer', mb: 1, userSelect: 'none'}}>
+        ${I(showPast ? 'expand_more' : 'chevron_right', {color: 'text.secondary'})}<${Typography} fontWeight="700">Past<//><${Typography} color="text.secondary">${past.length}<//><//>
+      ${showPast ? html`<${Paper} elevation=${1} sx=${{p: .5}}>${past.map(line)}<//>` : null}<//>` : null}
+  <//>`;
+}
+
+function Upcoming({c}) {
+  const {s} = c, ws = weekStart(new Date()), tw = [], nw = [];
+  for (let k = 1; k <= 13; k++) { const dd = iso(addDays(new Date(), k)); (parse(dd) < addDays(ws, 7) ? tw : nw).push(dd); }
+  const next = nw.filter(dd => parse(dd) < addDays(ws, 14)), last = next.length ? next[next.length - 1] : tw[tw.length - 1] || TODAY;
+  const [open, setOpen] = useState(true), [over, setOver] = useState(null);
+  const on = dd => [...startingOn(s, dd).map(p => ({k: 'p', it: p})),
+    ...s.items.filter(i => (i.type === 'task' && i.status !== 'done' || i.type === 'event') && i.when === dd).sort((a, b) => (a.time || '99').localeCompare(b.time || '99')).map(i => ({k: i.type === 'event' ? 'e' : 't', it: i}))];
+  const later = s.items.filter(i => (i.type === 'task' && i.status !== 'done' || i.type === 'event') && i.when > last).sort((a, b) => a.when.localeCompare(b.when));
+  const drop = (e, dd) => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData('text/plain'), it = id && byId(s, id); if (!it) return;
+    if (it.type === 'project') c.upd(id, {startDate: dd});
+    else if (it.viaStart) c.upd(it.project, {startDate: dd});
+    else if (it.type === 'task' || it.type === 'event') c.upd(id, x => ({when: dd, status: x.status === 'inbox' ? 'todo' : x.status})); };
+  const zone = dd => ({onDragOver: e => { e.preventDefault(); if (over !== dd) setOver(dd); }, onDragLeave: e => !e.currentTarget.contains(e.relatedTarget) && setOver(null), onDrop: e => drop(e, dd)});
+  const drag = id => e => { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; };
+  const line = (x, showDay) => x.k === 't' ? html`<${Row} key=${x.it.id} c=${c} it=${x.it} noDate=${!showDay}/>`
+    : html`<${Box} key=${x.it.id} draggable="true" onDragStart=${drag(x.it.id)} onClick=${() => c.open(x.it.id)}
+        sx=${{display: 'flex', alignItems: 'center', gap: 1.5, pl: 1.25, pr: 1, py: 1, borderRadius: 1, cursor: 'pointer', '&:hover': {bgcolor: 'action.hover'}}}>
+        ${x.k === 'e' ? I('event', {color: EVENT, fontSize: 22}) : I('flag', {color: '#4fc3f7', fontSize: 22})}
+        <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} noWrap>${x.it.name}<//>
+          ${x.k === 'p' ? html`<${Typography} variant="caption" color="text.secondary" component="div">Project starts<//>` : null}<//>
+        ${showDay ? html`<${Typography} variant="caption" color="text.secondary">${fmtDay(x.it.when)}<//>` : null}
+        ${x.it.time ? html`<${Chip} size="small" variant="outlined" label=${x.it.time}/>` : null}<//>`;
+  const dayBlock = (dd, small) => { const d = parse(dd), xs = on(dd);
+    return html`<${Box} key=${dd} ...${zone(dd)} sx=${{mb: small ? 1.5 : 3, borderRadius: 1, outline: over === dd ? '2px dashed' : 'none', outlineColor: 'primary.main', outlineOffset: 2}}>
+      <${Stack} direction="row" alignItems="baseline" spacing=${1.25} sx=${{borderBottom: 1, borderColor: 'divider', pb: .5, mb: .5}}>
+        <${Typography} sx=${{fontSize: small ? 18 : 26, fontWeight: 700, lineHeight: 1.1, minWidth: small ? 26 : 34}}>${d.getDate()}<//>
+        <${Typography} fontWeight="600" color=${small ? 'text.secondary' : 'text.primary'}>${dd === iso(addDays(new Date(), 1)) ? 'Tomorrow' : DOW_LONG[d.getDay()]}<//>
+      <//>
+      ${xs.length ? xs.map(x => line(x)) : html`<${Box} sx=${{height: small ? 8 : 14}}/>`}
+    <//>`; };
+  const rng = a => { const x = parse(a[0]), y = parse(a[a.length - 1]); return x.getDate() + (x.getMonth() !== y.getMonth() ? ' ' + MON[x.getMonth()] : '') + ' to ' + y.getDate() + ' ' + MON[y.getMonth()]; };
+  return html`<${Box}>
+    <${Head} icon="date_range" color="#ef8a80" title="Upcoming"/>
+    ${tw.map(dd => dayBlock(dd))}
+    ${next.length ? html`<${Box} sx=${{mb: 3}}>
+      <${Stack} direction="row" alignItems="center" spacing=${1} onClick=${() => setOpen(!open)} sx=${{cursor: 'pointer', mb: 1.5, userSelect: 'none'}}>
+        ${I(open ? 'expand_more' : 'chevron_right', {color: 'text.secondary'})}
+        <${Typography} sx=${{fontSize: 22, fontWeight: 700}}>Next week<//>
+        <${Typography} color="text.secondary">${rng(next)}<//>
+        <${Box} sx=${{flex: 1}}/>
+        ${open ? null : html`<${Typography} variant="body2" color="text.secondary">${next.reduce((n, dd) => n + on(dd).length, 0) || ''}<//>`}
+      <//>
+      ${open ? html`<${Box} sx=${{pl: {xs: 1.5, md: 4.5}}}>${next.map(dd => dayBlock(dd, true))}<//>` : null}
+    <//>` : null}
+    ${later.length ? html`<${Box}>
+      <${Typography} sx=${{fontSize: 22, fontWeight: 700, mb: 1}}>Later<//>
+      <${Paper} elevation=${1} sx=${{p: .5}}>${later.map(i => line({k: i.type === 'event' ? 'e' : 't', it: i}, true))}<//><//>` : null}
+  <//>`;
+}
+function Week({c}) {
+  const [off, setOff] = useState(0), ws = addDays(weekStart(new Date()), off * 7), days = [...Array(7)].map((_, k) => iso(addDays(ws, k)));
+  const bl = c.s.blocks.filter(b => b.day >= days[0] && b.day <= days[6]), deep = bl.filter(b => b.kind === 'deep').reduce((n, b) => n + b.min, 0);
+  const shallow = bl.reduce((n, b) => n + b.min, 0) - deep;
+  const inWk = ts => { const d = iso(new Date(ts)); return d >= days[0] && d <= days[6]; };
+  const done = [...c.s.items.filter(i => i.type === 'task' && i.status === 'done' && i.doneAt && inWk(i.doneAt)), ...c.s.items.flatMap(i => i.type === 'task' ? (i.done || []).filter(inWk).map(() => i) : [])];
+  const pts = done.reduce((n, t) => n + (+t.pts || 0), 0);
+  const a = parse(days[0]), z = parse(days[6]);
+  const stat = (v, l, col, icon) => html`<${Paper} elevation=${1} sx=${{p: 2}}>
+    <${Stack} direction="row" alignItems="center" spacing=${.75} sx=${{color: 'text.secondary'}}>${I(icon, {fontSize: 18, color: col})}<${Typography} variant="body2">${l}<//><//>
+    <${Typography} sx=${{fontSize: 28, fontWeight: 500, mt: .5, color: col}}>${v}<//><//>`;
+  return html`<${Box}>
+    <${Head} icon="calendar_view_week" color="#ce93d8" title="Week"/>
+    <${Stack} direction="row" alignItems="center" sx=${{mb: 1.5}}>
+      <${IconButton} color="primary" aria-label="Previous week" onClick=${() => setOff(off - 1)}>${I('chevron_left')}<//>
+      <${Typography} color="primary" sx=${{fontSize: 20, px: .5}}>${a.getDate() + (a.getMonth() !== z.getMonth() ? ' ' + MON[a.getMonth()] : '') + ' to ' + z.getDate() + ' ' + MON[z.getMonth()] + ' ' + z.getFullYear()}<//>
+      <${IconButton} color="primary" aria-label="Next week" onClick=${() => setOff(off + 1)}>${I('chevron_right')}<//>
+      <${Box} sx=${{flex: 1}}/>
+      <${Button} size="large" onClick=${() => setOff(0)} disabled=${off === 0}>Today<//>
+    <//>
+    <${Box} sx=${{display: 'grid', gridTemplateColumns: {xs: '1fr', lg: 'minmax(0, 5fr) minmax(0, 7fr)'}, gap: 1.5, mb: 2, alignItems: 'stretch'}}>
+      <${Box} sx=${{display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gridAutoRows: '1fr', gap: 1.5}}>
+        ${stat(done.length, 'Tasks completed', 'success.main', 'task_alt')}${stat(pts, 'Points', 'dojo.main', 'stars')}
+        ${stat(dur(deep), 'Deep work', KIND.deep, 'psychology')}${stat(dur(shallow), 'Shallow work', KIND.shallow, 'bolt')}
+      <//>
+      <${WeekHabits} c=${c} days=${days}/>
+    <//>
+    <${Cal} c=${c} days=${days}/>
+  <//>`;
+}
+
+function Habits({c}) {
+  const hs = c.s.items.filter(i => i.type === 'habit');
+  const mark = h => markHabit(c, h);
+  return html`<${Box}>
+    <${Head} icon="local_fire_department" color="#ef6c4a" title="Habits"
+      action=${html`<${Button} variant="contained" startIcon=${I('add')} onClick=${() => { const id = c.add({type: 'habit', name: 'New habit', status: 'todo', repeat: 'daily', log: []}); c.open(id); }}>New habit<//>`}/>
+    ${[['daily', 'Daily', 'today'], ['weekly', 'Weekly', 'today'], ['monthly', 'Monthly', 'this month']].map(([r, label, when]) => { const g = hs.filter(h => h.repeat === r);
+      return g.length ? html`<${Box} key=${r} sx=${{mb: 3}}>
+        <${Typography} variant="body2" color="text.secondary" fontWeight="600" sx=${{mb: 1}}>${label}<//>
+        <${Paper} elevation=${1}>${g.map(h => { const d = habitDone(h), st = streak(h);
+          return html`<${Box} key=${h.id} onClick=${() => c.open(h.id)} sx=${{display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, cursor: 'pointer',
+              borderBottom: 1, borderColor: 'divider', '&:last-child': {borderBottom: 0}, '&:hover': {bgcolor: 'action.hover'}}}>
+            <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} fontWeight="500" noWrap>${h.name}<//>
+              <${Typography} variant="caption" color="text.secondary">${st ? st + ' in a row' : 'No streak yet'}${h.project && byId(c.s, h.project) ? ', ' + byId(c.s, h.project).name : ''}<//><//>
+            <${Stack} direction="row" spacing=${.5} sx=${{display: {xs: 'none', sm: 'flex'}}}>${[...Array(14)].map((_, k) => { const dd = day(k - 13);
+              return html`<${Box} key=${k} sx=${{width: 10, height: 10, borderRadius: '2px', bgcolor: (h.log || []).includes(dd) ? 'dojo.main' : 'action.selected'}}/>`; })}<//>
+            <${Button} size="small" variant=${d ? 'contained' : 'outlined'} color=${d ? 'success' : 'inherit'} startIcon=${I(d ? 'check' : 'add')}
+              onClick=${e => { e.stopPropagation(); mark(h); }} sx=${{minWidth: 128}}>${d ? 'Done ' + when : 'Mark ' + when}<//>
+          <//>`; })}<//>
+      <//>` : null; })}
+  <//>`;
+}
+
+function Tasks({c}) {
+  const {s} = c, [q, setQ] = useState(''), [type, setType] = useState('task'), [st, setSt] = useState('open');
+  const [mode, setModeS] = useState(() => localStorage.getItem('one-table-tmode') || 'table'), setMode = v => { setModeS(v); localStorage.setItem('one-table-tmode', v); };
+  const board = mode === 'kanban';
+  const rows = s.items.filter(i => (type === 'all' ? i.type !== 'group' : i.type === type || type === 'task' && i.reminder) && (board || st === 'all' || (st === 'open' ? i.status !== 'done' : i.status === st))
+    && (c.pf === 'all' || (c.pf === 'none' ? !projOf(i) : projOf(i) === c.pf)) && i.name.toLowerCase().includes(q.toLowerCase()));
+  const sel = (label, value, set, opts) => html`<${TextField} select size="small" label=${label} value=${value} onChange=${e => set(e.target.value)} sx=${{minWidth: 140}}>
+    ${opts.map(([v, l]) => html`<${MenuItem} key=${v} value=${v}>${l}<//>`)}<//>`;
+  return html`<${Box}>
+    <${Head} icon="checklist" color="#66bb6a" title="Tasks" action=${(() => { const t = type === 'all' ? 'task' : type;
+      return html`<${Button} variant="contained" startIcon=${I('add')} onClick=${() => { const id = c.add({type: t, name: '', status: 'todo', fresh: true,
+          ...(c.pf !== 'all' && c.pf !== 'none' && t !== 'project' && t !== 'habit' ? {project: c.pf} : {}), ...(t === 'habit' ? {repeat: 'daily', log: []} : {}), ...(t === 'event' ? {dur: 60} : {})}); c.open(id); }}>
+        ${'New ' + t}<//>`; })()}/>
+    <${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1.5, mb: 2}} useFlexGap>
+      <${TextField} size="small" placeholder="Search" value=${q} onChange=${e => setQ(e.target.value)} InputProps=${{startAdornment: I('search', {mr: 1, color: 'text.secondary'})}} inputProps=${{'aria-label': 'Search'}}/>
+      ${sel('Type', type, setType, [['task', 'Tasks'], ['project', 'Projects'], ['milestone', 'Milestones'], ['habit', 'Habits'], ['event', 'Events'], ['all', 'Everything']])}
+      ${board ? null : sel('Status', st, setSt, [['open', 'Not done'], ['all', 'Any'], ...STATUS.map(v => [v, SLABEL[v]])])}
+      ${sel('Project', c.pf, c.setPf, [['all', 'Any project'], ['none', 'No project'], ...projects(s).map(p => [p.id, p.name])])}
+      <${Box} sx=${{flex: 1}}/>
+      <${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && setMode(v)}>
+        <${ToggleButton} value="table">${I('table_rows', {fontSize: 18, mr: .75})}Table<//><${ToggleButton} value="kanban">${I('view_kanban', {fontSize: 18, mr: .75})}Kanban<//><//>
+    <//>
+    ${board ? html`<${Board} c=${c} items=${rows} cap=${{done: 8}} cols=${[['inbox', 'Inbox'], ['todo', 'To do'], ['started', 'Started'], ['waiting', 'Waiting'], ['done', 'Done']]}
+      addLabel=${type === 'task' || type === 'all' ? 'New task' : 'New ' + type} onAdd=${(n, st) => c.add({type: type === 'all' ? 'task' : type, name: n, status: st,
+        ...(c.pf !== 'all' && c.pf !== 'none' ? {project: c.pf} : {}), ...(type === 'habit' ? {repeat: 'daily'} : {})})}
+      card=${i => { const p = i.project && byId(c.all, i.project), m = i.milestone && byId(c.all, i.milestone), dn = i.status === 'done';
+        return html`<${Stack} direction="row" alignItems="flex-start" spacing=${.75}>
+            <${IconButton} size="small" aria-label=${dn ? 'Mark not done' : 'Mark done'} onClick=${e => { e.stopPropagation(); c.toggle(i); }} sx=${{p: .25, mt: -.25, ml: -.5, color: dn ? 'success.main' : 'text.secondary'}}>
+              ${I(dn ? 'check_circle' : 'radio_button_unchecked', {fontSize: 20})}<//>
+            <${Typography} variant="body2" fontWeight="500" sx=${{flex: 1, lineHeight: 1.35, color: dn ? 'text.secondary' : 'text.primary', textDecoration: dn ? 'line-through' : 'none'}}>${i.name}<//>
+            ${i.type === 'task' ? html`<${Box} sx=${{mt: -.75, mr: -.75}}><${Star} c=${c} it=${i} size=${18}/><//>` : null}
+          <//>
+          ${p ? html`<${Typography} variant="caption" color="text.secondary" component="div" noWrap sx=${{mt: .5, pl: 3.5}}>${p.name}${m ? ', ' + m.name : ''}<//>` : null}
+          ${i.when || i.due || i.pts ? html`<${Stack} direction="row" spacing=${.75} alignItems="center" sx=${{mt: .75, pl: 3.5}}>
+            ${i.when || i.due ? html`<${Typography} variant="caption" color=${i.when === TODAY ? 'warning.main' : 'text.secondary'}>${fmtDay(i.when || i.due)}${i.time ? ', ' + i.time : ''}<//>` : null}
+            <${Box} sx=${{flex: 1}}/>
+            ${i.pts ? html`<${Box} sx=${{fontSize: 12, fontWeight: 600, px: .75, borderRadius: 2, bgcolor: 'action.selected', color: 'text.secondary'}}>${i.pts}<//>` : null}<//>` : null}`; }}/>` : html`
+    <${TableContainer} component=${Paper} elevation=${1}>
+      <${Table} size="small">
+        <${TableHead}><${TableRow}><${TableCell} padding="checkbox"/><${TableCell}>Name<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>Project<//>
+          <${TableCell}>Status<//><${TableCell} sx=${{display: {xs: 'none', md: 'table-cell'}}}>When<//><${TableCell} sx=${{display: {xs: 'none', md: 'table-cell'}}}>Repeats<//><${TableCell} padding="checkbox"/><//><//>
+        <${TableBody}>${rows.map(i => { const p = i.project && byId(s, i.project), m = i.milestone && byId(s, i.milestone);
+          return html`<${TableRow} key=${i.id} hover onClick=${() => c.open(i.id)} sx=${{cursor: 'pointer'}}>
+            <${TableCell} padding="checkbox"><${Checkbox} size="small" checked=${i.status === 'done'} onClick=${e => e.stopPropagation()} onChange=${() => c.toggle(i)}
+              icon=${I('radio_button_unchecked', {fontSize: 18})} checkedIcon=${I('check_circle', {fontSize: 18})} color="success" inputProps=${{'aria-label': 'Done'}}/><//>
+            <${TableCell}><${Stack} direction="row" alignItems="center" spacing=${.75}>${i.type === 'event' ? I(i.reminder ? 'notifications' : 'event', {fontSize: 18, color: EVENT}) : null}<${Typography} variant="body2" fontWeight="500" sx=${{flex: 1}}>${i.name}<//>${i.type === 'task' ? html`<${Star} c=${c} it=${i} size=${18}/>` : null}<//>${type === 'all' ? html`<${Typography} variant="caption" color="text.secondary">${i.type}<//>` : null}<//>
+            <${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}><${Typography} variant="body2">${p ? p.name : ''}<//>
+              ${m ? html`<${Typography} variant="caption" color="text.secondary">${m.name}<//>` : null}<//>
+            <${TableCell}><${Status} v=${i.status}/><//>
+            <${TableCell} sx=${{display: {xs: 'none', md: 'table-cell'}, whiteSpace: 'nowrap'}}>${fmtDay(i.when || i.due)}${(i.when || i.due) && parse(i.when || i.due).getFullYear() !== new Date().getFullYear() ? ' ' + parse(i.when || i.due).getFullYear() : ''}${i.time ? ', ' + i.time : ''}<//>
+            <${TableCell} sx=${{display: {xs: 'none', md: 'table-cell'}}}>${i.repeat ? (i.type === 'event' ? REP[i.repeat] || i.repeat : i.repeat) : ''}<//>
+            <${TableCell} padding="checkbox"><${IconButton} size="small" aria-label=${'Delete ' + i.name} onClick=${e => { e.stopPropagation(); c.del(i.id); }}
+              sx=${{color: 'text.disabled', '&:hover': {color: 'error.main'}}}>${I('delete', {fontSize: 19})}<//><//>
+          <//>`; })}
+          ${rows.length ? null : html`<${TableRow}><${TableCell} colSpan=${7} sx=${{py: 4, textAlign: 'center', color: 'text.secondary'}}>Nothing matches these filters.<//><//>`}
+        <//>
+      <//>
+    <//>`}
+  <//>`;
+}
+
+function Line({c, p}) {
+  const ms = milestones(c.s, p.id), n = ms.length;
+  if (!n) return html`<${Typography} variant="body2" color="text.secondary">No milestones yet<//>`;
+  const dn = ms.map(m => msDone(c.s, m)), last = dn.lastIndexOf(true);
+  return html`<${Box} sx=${{overflowX: 'auto', pb: .5}}><${Box} sx=${{position: 'relative', minWidth: n * 128, display: 'grid', gridTemplateColumns: 'repeat(' + n + ', minmax(0,1fr))'}}>
+    <${Box} sx=${{position: 'absolute', top: 14, height: 4, borderRadius: 2, left: 50 / n + '%', right: 50 / n + '%', bgcolor: 'action.selected'}}/>
+    ${last > 0 ? html`<${Box} sx=${{position: 'absolute', top: 14, height: 4, borderRadius: 2, left: 50 / n + '%', width: last * 100 / n + '%', bgcolor: 'success.main'}}/>` : null}
+    ${ms.map((m, k) => { const t = msTasks(c.s, m.id), d = t.filter(x => x.status === 'done').length, done = dn[k], cur = !done && k === last + 1;
+      return html`<${Box} key=${m.id} onClick=${() => c.open(m.id)} sx=${{textAlign: 'center', cursor: 'pointer', px: .75, position: 'relative'}}>
+        <${Box} sx=${{width: 32, height: 32, mx: 'auto', borderRadius: '50%', display: 'grid', placeItems: 'center', border: 3, fontSize: 13, fontWeight: 700,
+          bgcolor: done ? 'success.main' : 'background.paper', borderColor: done ? 'success.main' : cur ? 'primary.main' : 'action.disabled', color: done ? '#0d200f' : cur ? 'primary.main' : 'text.secondary'}}>
+          ${done ? I('check', {fontSize: 18}) : k + 1}<//>
+        <${Typography} variant="body2" fontWeight="600" sx=${{mt: 1, lineHeight: 1.25, color: done ? 'success.main' : 'text.primary'}}>${m.name}${ptsLabel(msPts(c.s, m.id))}<//>
+        <${Typography} variant="caption" color="text.secondary" component="div">${d} of ${t.length}${tasksN(t.length)} done<//>
+        ${m.due ? html`<${Typography} variant="caption" color="text.secondary" component="div">${fmtDay(m.due)}<//>` : null}
+      <//>`; })}
+  <//><//>`;
+}
+
+/* mind map: project > milestones > tasks */
+function NodeInput({init, onDone}) {
+  const [v, setV] = useState(init), fired = React.useRef(false), born = React.useRef(Date.now()), el = React.useRef(null);
+  useEffect(() => { const t = setTimeout(() => el.current && el.current.focus(), 60); return () => clearTimeout(t); }, []);
+  const fin = (val, k) => { if (fired.current) return; fired.current = true; onDone(val, k); };
+  const blur = () => { if (Date.now() - born.current < 600) { setTimeout(() => el.current && el.current.focus(), 30); return; } fin(v, 'blur'); };
+  return html`<${InputBase} autoFocus fullWidth inputRef=${el} value=${v} placeholder="Name" onChange=${e => setV(e.target.value)} onBlur=${blur}
+    onClick=${e => e.stopPropagation()} onKeyDown=${e => { if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); fin(v, e.key); } else if (e.key === 'Escape') { e.preventDefault(); fin(init, 'blur'); } }}
+    sx=${{font: 'inherit', color: 'inherit'}} inputProps=${{style: {padding: 0}, 'aria-label': 'Name'}}/>`;
+}
+function useLink() {
+  const box = React.useRef(null), active = React.useRef(false), [link, setLink] = useState(null);
+  const begin = (e, a, onUp) => { e.preventDefault(); e.stopPropagation(); active.current = true; const r = box.current.getBoundingClientRect();
+    setLink({x1: a.x, y1: a.y, x2: a.x, y2: a.y});
+    const mv = ev => setLink(l => l && {...l, x2: ev.clientX - r.left, y2: ev.clientY - r.top});
+    const up = ev => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); active.current = false; setLink(null); onUp(ev); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); };
+  const path = link ? html`<g><path d=${'M' + link.x1 + ' ' + link.y1 + ' C' + (link.x1 + 40) + ' ' + link.y1 + ' ' + (link.x2 - 40) + ' ' + link.y2 + ' ' + link.x2 + ' ' + link.y2}
+    fill="none" stroke="#90caf9" stroke-width="2.5" stroke-dasharray="6 4"/><circle cx=${link.x2} cy=${link.y2} r="6" fill="#90caf9"/></g>` : null;
+  return {box, active, path, begin};
+}
+const Dot = ({title, color, onDown}) => html`<${Box} onPointerDown=${onDown} onClick=${e => e.stopPropagation()} title=${title}
+  sx=${{position: 'absolute', right: -9, top: '50%', mt: '-9px', width: 18, height: 18, borderRadius: '50%', bgcolor: 'background.paper', border: '2px solid', borderColor: color,
+    cursor: 'crosshair', zIndex: 2, display: 'grid', placeItems: 'center', touchAction: 'none', transition: 'transform .12s', '&:hover': {transform: 'scale(1.3)'},
+    '&::after': {content: '""', width: 6, height: 6, borderRadius: '50%', bgcolor: color}}}/>`;
+
+function MindMap({c, p}) {
+  const s = c.s, [drag, setDrag] = useState(null), [over, setOver] = useState(null), [edit, setEdit] = useState(null), tmr = React.useRef(null);
+  const L0 = useLink(), [menu, setMenu] = useState(null);
+  const ms = milestones(s, p.id), mids = new Set(ms.map(m => m.id)), habs = habitsOf(s, p.id);
+  const loose = s.items.filter(i => i.type === 'task' && i.project === p.id && !mids.has(i.milestone));
+  const groups = [...ms.map(m => ({m, id: m.id, tasks: msTasks(s, m.id)})), ...(loose.length ? [{m: null, id: null, tasks: loose}] : [])];
+  const PW = 220, MX = 280, MW = 240, TX = 580, TW = 300, TH = 38, TG = 8, MH = 62, GAP = 26, PH = 84;
+  let y = 0; const L = groups.map(g => { const th = g.tasks.length ? g.tasks.length * (TH + TG) - TG : 0, h = Math.max(MH, th), o = {...g, top: y + (h - th) / 2, h, my: y + (h - MH) / 2}; y += h + GAP; return o; });
+  const HB = habs.map(h => { const o = {h, y}; y += TH + TG; return o; });
+  const end = Math.max(PH, y - (habs.length ? TG : GAP)), H = end + 8, py = end / 2 - PH / 2;
+  const newHabit = () => { const id = c.add({type: 'habit', name: '', repeat: 'daily', project: p.id, log: []}); setEdit(id); };
+  const pdot = (id, a, color, title) => html`<${Dot} title=${title} color=${color} onDown=${e => L0.begin(e, a, ev => id === 'p' ? setMenu({left: ev.clientX, top: ev.clientY}) : newTask(id))}/>`;
+  const newTask = (mid, rep) => { const id = c.add({type: 'task', name: '', status: 'todo', project: p.id, milestone: mid, ...(rep ? {repeat: rep, when: TODAY} : {})}); setEdit(id); };
+  const newMs = () => { const id = c.add({type: 'milestone', name: '', status: 'todo', project: p.id}); setEdit(id); };
+  const done = (it, v, k) => { const n = v.trim(); setEdit(null);
+    if (!n) { if (!it.name) c.set(x => ({...x, items: x.items.filter(i => i.id !== it.id)})); return; }
+    if (n !== it.name) c.upd(it.id, {name: n});
+    if (k === 'Enter') it.type === 'task' ? newTask(mids.has(it.milestone) ? it.milestone : null) : it.type === 'habit' ? newHabit() : newMs();
+    else if (k === 'Tab' && it.type === 'milestone') newTask(it.id); };
+  const click = it => ({onClick: () => { clearTimeout(tmr.current); tmr.current = setTimeout(() => c.open(it.id), 230); },
+    onDoubleClick: () => { clearTimeout(tmr.current); setEdit(it.id); }});
+  const src = (it, kind) => ({draggable: edit !== it.id, onDragStart: e => { if (L0.active.current) { e.preventDefault(); return; } e.dataTransfer.setData('text/plain', it.id); e.dataTransfer.effectAllowed = 'move'; setDrag({id: it.id, kind}); },
+    onDragEnd: () => { setDrag(null); setOver(null); }});
+  const tgt = (key, ok, run) => ({onDragOver: e => { if (!drag || !ok(drag)) return; e.preventDefault(); e.stopPropagation(); if (over !== key) setOver(key); },
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(o => o === key ? null : o); },
+    onDrop: e => { e.preventDefault(); e.stopPropagation(); setOver(null); if (drag && ok(drag)) run(drag); setDrag(null); }});
+  const bar = html`<${Box} sx=${{position: 'absolute', left: 0, right: 0, top: -6, height: 3, borderRadius: 2, bgcolor: 'primary.main'}}/>`;
+  const curve = (x1, y1, x2, y2, col, dash) => html`<path d=${'M' + x1 + ' ' + y1 + ' C' + (x1 + 34) + ' ' + y1 + ' ' + (x2 - 34) + ' ' + y2 + ' ' + x2 + ' ' + y2}
+    fill="none" stroke=${col || 'currentColor'} stroke-width="2" stroke-dasharray=${dash ? '4 4' : null}/>`;
+  const box = (x, top, w, h, extra) => ({position: 'absolute', left: x, top, width: w, height: h, borderRadius: 1, display: 'flex', alignItems: 'center', gap: 1, px: 1.25,
+    cursor: 'pointer', userSelect: 'none', transition: 'box-shadow .15s', '&:hover': {boxShadow: 6}, ...extra});
+  const totalT = s.items.filter(i => i.type === 'task' && i.project === p.id), tDone = totalT.filter(t => t.status === 'done').length;
+  return html`<${Box}>
+    <${Paper} elevation=${1} sx=${{overflow: 'auto', p: 3}}>
+    <${Box} ref=${L0.box} sx=${{position: 'relative', width: TX + TW, height: Math.max(H, PH + 10), color: 'text.disabled'}}>
+      <svg width=${TX + TW} height=${Math.max(H, PH + 10)} style=${{position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible'}}>
+        ${L.map(g => html`<g key=${'c' + g.id}>${curve(PW, py + PH / 2, MX, g.my + MH / 2, g.m && msDone(s, g.m) ? '#66bb6a' : null, !g.m)}
+          ${g.tasks.map((t, k) => curve(MX + MW, g.my + MH / 2, TX, g.top + k * (TH + TG) + TH / 2, t.status === 'done' ? '#66bb6a' : null))}<//>`)}
+        ${HB.map(o => curve(PW, py + PH / 2, MX, o.y + TH / 2, habitDone(o.h) ? '#66bb6a' : '#ce93d8'))}
+        ${L0.path}
+      </svg>
+      <${Paper} elevation=${4} onClick=${() => c.open(p.id)} sx=${box(0, py, PW, PH, {flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: .25, px: 1.75,
+          borderLeft: '4px solid', borderColor: 'dojo.main'})}>
+        <${Typography} fontWeight="700" sx=${{lineHeight: 1.25, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>${p.name}<//>
+        <${Typography} variant="caption" color="text.secondary">${tDone} of ${totalT.length}${tasksN(totalT.length)} done${ptsLabel(totalT.reduce((n, t) => n + (+t.pts || 0), 0))}<//>
+        ${pdot('p', {x: PW, y: py + PH / 2}, 'dojo.main', 'Drag out to add a milestone, task or habit')}
+      <//>
+      ${L.map((g, gi) => { const m = g.m, mk = 'm:' + g.id, d = m && msDone(s, m), td = g.tasks.filter(t => t.status === 'done').length;
+        const mt = tgt(mk, dr => dr.kind === 'task' || (m && dr.kind === 'ms' && dr.id !== m.id), dr => dr.kind === 'task' ? c.move(dr.id, null, {milestone: g.id, project: p.id}) : c.move(dr.id, m.id));
+        return html`<${React.Fragment} key=${'g' + g.id}>
+          <${Paper} elevation=${m ? 3 : 0} ...${m ? {...click(m), ...src(m, 'ms')} : {}} ...${mt}
+            sx=${box(MX, g.my, MW, MH, {flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: .25, borderLeft: '4px solid',
+              borderColor: d ? 'success.main' : m ? 'primary.main' : 'divider', ...(m ? {} : {border: '1px dashed', borderColor: 'divider', bgcolor: 'transparent', cursor: 'default', '&:hover': {}}),
+              outline: over === mk && drag && drag.kind === 'task' ? '2px solid' : 'none', outlineColor: 'primary.main', opacity: drag && m && drag.id === m.id ? .4 : 1})}>
+            ${over === mk && drag && drag.kind === 'ms' ? bar : null}
+            <${Stack} direction="row" alignItems="center" spacing=${.75} sx=${{minWidth: 0}}>
+              ${m ? I(d ? 'check_circle' : 'flag', {fontSize: 18, color: d ? 'success.main' : 'primary.main'}) : I('inbox', {fontSize: 18})}
+              <${Box} sx=${{flex: 1, minWidth: 0, fontWeight: 600, fontSize: 14.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: m ? 'text.primary' : 'text.secondary'}}>
+                ${m && edit === m.id ? html`<${NodeInput} init=${m.name} onDone=${(v, k) => done(m, v, k)}/>` : m ? m.name + ptsLabel(msPts(s, m.id)) : 'No milestone'}<//>
+            <//>
+            <${Typography} variant="caption" color="text.secondary" noWrap>${g.tasks.length ? td + ' of ' + g.tasks.length + ' done' : 'No tasks yet'}${m && m.due ? ', due ' + fmtDay(m.due) : ''}<//>
+            ${pdot(g.id, {x: MX + MW, y: g.my + MH / 2}, 'primary.main', 'Drag out to add a task')}
+          <//>
+          ${g.tasks.map((t, k) => { const tk = 't:' + t.id, top = g.top + k * (TH + TG), dn = t.status === 'done';
+            return html`<${Paper} key=${t.id} elevation=${2} ...${click(t)} ...${src(t, 'task')}
+                ...${tgt(tk, dr => dr.kind === 'task' && dr.id !== t.id, dr => c.move(dr.id, t.id, {milestone: g.id, project: p.id}))}
+                sx=${box(TX, top, TW, TH, {opacity: drag && drag.id === t.id ? .4 : 1, pl: .5})}>
+              ${over === tk ? bar : null}
+              <${IconButton} size="small" aria-label=${dn ? 'Mark not done' : 'Mark done'} onClick=${e => { e.stopPropagation(); c.toggle(t); }} sx=${{p: .25, color: dn ? 'success.main' : 'text.secondary'}}>
+                ${I(dn ? 'check_circle' : 'radio_button_unchecked', {fontSize: 20})}<//>
+              <${Box} sx=${{flex: 1, minWidth: 0, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  color: dn ? 'text.secondary' : 'text.primary', textDecoration: dn ? 'line-through' : 'none'}}>
+                ${edit === t.id ? html`<${NodeInput} init=${t.name} onDone=${(v, k) => done(t, v, k)}/>` : t.name}<//>
+              ${t.when === TODAY ? I('star', {fontSize: 16, color: '#f6c343'}) : null}
+              ${t.pts ? html`<${Box} sx=${{fontSize: 12, fontWeight: 600, px: .75, borderRadius: 2, bgcolor: 'action.selected', color: 'text.secondary'}}>${t.pts}<//>` : null}
+            <//>`; })}
+        <//>`; })}
+      ${HB.map(({h, y: hy}) => { const hk = 'h:' + h.id, dn = habitDone(h);
+        return html`<${Paper} key=${h.id} elevation=${2} ...${click(h)} ...${src(h, 'habit')} ...${tgt(hk, dr => dr.kind === 'habit' && dr.id !== h.id, dr => c.move(dr.id, h.id))}
+            sx=${box(MX, hy, MW, TH, {pl: .5, borderLeft: '3px solid', borderColor: '#ce93d8', opacity: drag && drag.id === h.id ? .4 : 1})}>
+          ${over === hk ? bar : null}
+          <${IconButton} size="small" aria-label=${dn ? 'Undo' : 'Mark done'} onClick=${e => { e.stopPropagation(); markHabit(c, h); }} sx=${{p: .25, color: dn ? 'success.main' : 'text.secondary'}}>
+            ${I(dn ? 'check_circle' : 'radio_button_unchecked', {fontSize: 20})}<//>
+          <${Box} sx=${{flex: 1, minWidth: 0, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+            ${edit === h.id ? html`<${NodeInput} init=${h.name} onDone=${(v, k) => done(h, v, k)}/>` : h.name}<//>
+          <${Typography} variant="caption" color="text.secondary">${h.repeat}<//>
+          ${I('local_fire_department', {fontSize: 17, color: dn ? 'text.disabled' : 'dojo.main'})}
+        <//>`; })}
+    <//><//>
+    <${Menu} open=${!!menu} onClose=${() => setMenu(null)} disableRestoreFocus anchorReference="anchorPosition" anchorPosition=${menu || {top: 0, left: 0}}>
+      <${MenuItem} onClick=${() => { setMenu(null); newMs(); }}>${I('flag', {mr: 1.5, color: 'primary.main'})}New milestone<//>
+      <${MenuItem} onClick=${() => { setMenu(null); newTask(null); }}>${I('add_task', {mr: 1.5, color: 'success.main'})}New task<//>
+      <${MenuItem} onClick=${() => { setMenu(null); newTask(null, 'daily'); }}>${I('repeat', {mr: 1.5, color: 'success.main'})}New recurring task<//>
+    <//>
+  <//>`;
+}
+
+/* board: one column per status, drag cards to change status or order */
+const stPatch = (it, st) => ({status: st, ...(st === 'done' && it.status !== 'done' ? {doneAt: Date.now()} : st !== 'done' && it.status === 'done' ? {doneAt: null} : {})});
+function Board({c, items, cols, card, onAdd, addLabel, cap = {}}) {
+  const [drag, setDrag] = useState(null), [over, setOver] = useState(null), [more, setMore] = useState({});
+  const col = i => i.status === 'inbox' && !cols.some(([k]) => k === 'inbox') ? 'todo' : i.status || 'todo';
+  const tgt = (key, run) => ({onDragOver: e => { if (!drag) return; e.preventDefault(); e.stopPropagation(); if (over !== key) setOver(key); },
+    onDrop: e => { e.preventDefault(); e.stopPropagation(); setOver(null); if (drag) run(drag); setDrag(null); }});
+  const to = (st, before) => id => { const it = byId(c.all, id); if (it && id !== before) c.move(id, before || null, stPatch(it, st)); };
+  return html`<${Box} sx=${{display: 'grid', gridTemplateColumns: {xs: '1fr', sm: 'repeat(2, minmax(0,1fr))', lg: 'repeat(' + cols.length + ', minmax(0,1fr))'}, gap: 1.5, alignItems: 'start'}}>
+    ${cols.map(([st, label]) => { let list = items.filter(i => col(i) === st); const n = list.length;
+      if (st === 'done') list = [...list].sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+      if (cap[st] && !more[st]) list = list.slice(0, cap[st]);
+      return html`<${Paper} key=${st} elevation=${1} ...${tgt('c:' + st, to(st))}
+          sx=${{p: 1.25, minHeight: 160, outline: over === 'c:' + st ? '2px solid' : 'none', outlineColor: 'primary.main'}}>
+        <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{px: .5, mb: 1.25}}>
+          <${Status} v=${st}/><${Box} sx=${{flex: 1}}/><${Typography} variant="body2" color="text.secondary">${n}<//><//>
+        <${Stack} spacing=${1}>
+          ${list.map(i => html`<${Card} key=${i.id} elevation=${3} draggable onDragStart=${e => { e.dataTransfer.setData('text/plain', i.id); setDrag(i.id); }}
+              onDragEnd=${() => { setDrag(null); setOver(null); }} ...${tgt('p:' + i.id, to(st, i.id))} onClick=${() => c.open(i.id)}
+              sx=${{p: 1.5, cursor: 'grab', position: 'relative', opacity: drag === i.id ? .4 : 1, '&:hover': {boxShadow: 8}}}>
+            ${over === 'p:' + i.id && drag !== i.id ? html`<${Box} sx=${{position: 'absolute', left: 0, right: 0, top: -6, height: 3, borderRadius: 2, bgcolor: 'primary.main'}}/>` : null}
+            ${card(i)}<//>`)}
+          ${n > list.length || more[st] && cap[st] && n > cap[st] ? html`<${Button} size="small" onClick=${() => setMore(m => ({...m, [st]: !m[st]}))}>${more[st] ? 'Show fewer' : 'Show all ' + n}<//>` : null}
+          ${onAdd && st !== 'done' ? html`<${Box} sx=${{px: .25}}><${Quick} label=${addLabel} onAdd=${name => onAdd(name, st)}/><//>` : null}
+        <//>
+      <//>`; })}
+  <//>`;
+}
+
+function Kanban({c}) {
+  const s = c.s;
+  const card = p => { const t = tasksOf(s, p.id), d = t.filter(x => x.status === 'done').length, cur = milestones(s, p.id).find(m => !msDone(s, m));
+    return html`<${Stack} direction="row" alignItems="flex-start" spacing=${.5}>
+        <${Typography} fontWeight="600" sx=${{flex: 1, lineHeight: 1.3}}>${p.name}<//>
+        <${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }} sx=${{mt: -.5, mr: -.5}}>
+          ${I('account_tree', {fontSize: 18})}<//><//>
+      <//>
+      ${cur ? html`<${Typography} variant="body2" color="text.secondary" sx=${{mt: .5}} noWrap>${I('flag', {fontSize: 15, mr: .5, verticalAlign: '-3px', color: 'primary.main'})}${cur.name}<//>` : null}
+      ${p.startDate ? html`<${Typography} variant="body2" color="text.secondary" sx=${{mt: .25}} noWrap>Starts ${fmtDay(p.startDate)}<//>` : null}
+      <${LinearProgress} variant="determinate" value=${t.length ? d * 100 / t.length : 0} color="success" sx=${{mt: 1.25, height: 5, borderRadius: 3}}/>
+      <${Stack} direction="row" sx=${{mt: .75}}>
+        <${Typography} variant="caption" color="text.secondary" sx=${{flex: 1}}>${d} of ${t.length}${tasksN(t.length)}<//>
+        ${p.due ? html`<${Typography} variant="caption" color="text.secondary">Due ${fmtDay(p.due)}<//>` : null}<//>`; };
+  return html`<${Board} c=${c} items=${projects(s)} cols=${[['todo', 'To do'], ['started', 'Started'], ['waiting', 'Waiting'], ['done', 'Done']]} card=${card}
+    addLabel="New project" onAdd=${(n, st) => c.add({type: 'project', name: n, status: st})}/>`;
+}
+
+function Projects({c}) {
+  const note = html`<${Box} sx=${{position: 'sticky', bottom: 0, mt: 4, py: 1.5, bgcolor: 'background.default', borderTop: 1, borderColor: 'divider', zIndex: 2}}>
+    <${Typography} variant="body2" color="text.secondary" sx=${{fontStyle: 'italic'}}>Manage objectives in Obsidian, not here.<//><//>`;
+  const [mode, setModeS] = useState(() => localStorage.getItem('one-table-pmode') || 'lines'), ps = projects(c.s);
+  const setMode = v => { setModeS(v); localStorage.setItem('one-table-pmode', v); };
+  const [pd, setPd] = useState(null), [po, setPo] = useState(null);
+  const half = e => { const r = e.currentTarget.getBoundingClientRect(); return e.clientY > r.top + r.height / 2 ? 'after' : 'before'; };
+  const dropP = (p, k, where) => { if (!pd || pd === p.id) return; const nx = ps[k + 1];
+    c.move(pd, where === 'before' ? p.id : nx ? (nx.id === pd ? (ps[k + 2] || {}).id || null : nx.id) : null); };
+  const mp = c.mapId && byId(c.s, c.mapId);
+  if (mp && mp.type === 'project') return html`<${Box}>
+    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
+      <${Button} startIcon=${I('arrow_back')} onClick=${() => c.mindMap(null)}>Projects<//>
+      <${Box} sx=${{flex: 1}}/>
+      <${Select} size="small" value=${mp.id} onChange=${e => c.mindMap(e.target.value)} sx=${{minWidth: 220}} inputProps=${{'aria-label': 'Project'}}>
+        ${ps.map(p => html`<${MenuItem} key=${p.id} value=${p.id}>${p.name}<//>`)}<//>
+    <//>
+    <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2}}>
+      <${Box} sx=${{color: '#4fc3f7', display: 'flex'}}>${I('account_tree', {fontSize: 30})}<//>
+      <${Typography} variant="h4" component="h1" noWrap sx=${{flex: 1, minWidth: 0}}>${mp.name}<//>
+      <${Status} v=${mp.status}/>
+    <//>
+    <${Typography} color="text.secondary" onClick=${() => c.open(mp.id)} sx=${{mb: 2.5, mt: -1, cursor: 'pointer'}}>${mp.doneWhen ? 'Goal: ' + mp.doneWhen : 'No goal'}<//>
+    <${MindMap} c=${c} p=${mp}/>
+    ${note}
+  <//>`;
+  const newP = () => { const id = c.add({type: 'project', name: 'New project', status: 'todo'}); c.open(id); };
+  return html`<${Box}>
+    <${Head} icon="flag" color="#4fc3f7" title="Projects"
+      action=${html`<${Button} variant="contained" startIcon=${I('add')} onClick=${newP}>New project<//>`}/>
+    <${ToggleButtonGroup} size="small" exclusive value=${mode} onChange=${(e, v) => v && setMode(v)} sx=${{mb: 2}}>
+      <${ToggleButton} value="lines">${I('timeline', {fontSize: 18, mr: .75})}Milestones<//><${ToggleButton} value="kanban">${I('view_kanban', {fontSize: 18, mr: .75})}Kanban<//>
+      <${ToggleButton} value="table">${I('table_rows', {fontSize: 18, mr: .75})}Table<//><//>
+    ${mode === 'kanban' ? html`<${Kanban} c=${c}/>` : mode === 'lines' ? html`      <${Stack} spacing=${2}>${ps.map((p, k) => { const t = tasksOf(c.s, p.id), ov = po && po.id === p.id && pd && pd !== p.id ? po.where : null;
+        return html`<${Card} key=${p.id} elevation=${1} draggable onDragStart=${e => { e.dataTransfer.setData('text/plain', p.id); e.dataTransfer.effectAllowed = 'move'; setPd(p.id); }}
+            onDragEnd=${() => { setPd(null); setPo(null); }} onDragOver=${e => { if (!pd) return; e.preventDefault(); const w = half(e); if (!po || po.id !== p.id || po.where !== w) setPo({id: p.id, where: w}); }}
+            onDrop=${e => { e.preventDefault(); dropP(p, k, half(e)); setPd(null); setPo(null); }}
+            sx=${{p: {xs: 2, md: 2.5}, position: 'relative', overflow: 'visible', opacity: pd === p.id ? .4 : 1}}>
+          ${ov ? html`<${Box} sx=${{position: 'absolute', left: 0, right: 0, [ov === 'before' ? 'top' : 'bottom']: -10, height: 3, borderRadius: 2, bgcolor: 'primary.main'}}/>` : null}
+          <${Stack} direction="row" alignItems="center" spacing=${1.5} sx=${{mb: 2.5, cursor: 'pointer'}} onClick=${() => c.open(p.id)}>
+            <${Tooltip} title="Drag to reorder"><${Box} onClick=${e => e.stopPropagation()} sx=${{display: 'flex', color: 'text.disabled', cursor: 'grab', ml: -1, mr: -.75}}>${I('drag_indicator', {fontSize: 22})}<//><//>
+            <${Box} sx=${{width: 30, height: 30, flexShrink: 0, borderRadius: '50%', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 15,
+              bgcolor: k < 3 ? 'dojo.main' : 'action.selected', color: k < 3 ? 'dojo.contrastText' : 'text.secondary'}}>${k + 1}<//>
+            <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} variant="h6" fontWeight="700" noWrap>${p.name}<//>
+              <${Typography} variant="body2" color="text.secondary" noWrap>${p.doneWhen ? 'Goal: ' + p.doneWhen : 'No goal'}<//>
+              <${Typography} variant="body2" color="text.secondary" noWrap>${p.startDate ? 'Starts ' + fmtDay(p.startDate) : 'No start date'}<//><//>
+            <${Typography} variant="body2" color="text.secondary" sx=${{whiteSpace: 'nowrap', display: {xs: 'none', sm: 'block'}}}>${t.filter(x => x.status === 'done').length} of ${t.length}${tasksN(t.length)}<//>
+            <${Status} v=${p.status}/>
+            <${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }}>${I('account_tree', {fontSize: 20})}<//><//>
+          <//>
+          <${Line} c=${c} p=${p}/>
+          ${habitsOf(c.s, p.id).length ? html`<${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1, mt: 2}} useFlexGap>${habitsOf(c.s, p.id).map(h => html`<${Chip} key=${h.id}
+            icon=${I(habitDone(h) ? 'check_circle' : 'local_fire_department', {fontSize: 18})} label=${h.name + (streak(h) ? ', ' + streak(h) + ' in a row' : '')}
+            color=${habitDone(h) ? 'success' : 'default'} variant=${habitDone(h) ? 'filled' : 'outlined'} onClick=${() => c.open(h.id)}/>`)}<//>` : null}
+        <//>`; })}<//>`
+    : html`<${TableContainer} component=${Paper} elevation=${1}><${Table} size="small">
+        <${TableHead}><${TableRow}><${TableCell}>Project<//><${TableCell}>Status<//><${TableCell} align="right">Done<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>Starts<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>Due<//><${TableCell}/><//><//>
+        <${TableBody}>${ps.map(p => { const t = tasksOf(c.s, p.id); return html`<${TableRow} key=${p.id} hover sx=${{cursor: 'pointer'}} onClick=${() => c.open(p.id)}>
+          <${TableCell}><${Typography} variant="body2" fontWeight="600">${p.name}<//><//><${TableCell}><${Status} v=${p.status}/><//>
+          <${TableCell} align="right" sx=${{whiteSpace: 'nowrap'}}>${t.filter(x => x.status === 'done').length} of ${t.length}<//>
+          <${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}}}>${fmtDay(p.startDate)}<//><${TableCell} sx=${{display: {xs: 'none', sm: 'table-cell'}, whiteSpace: 'nowrap'}}>${fmtDay(p.due)}<//>
+          <${TableCell} padding="checkbox"><${Tooltip} title="Mind map"><${IconButton} size="small" aria-label=${'Mind map of ' + p.name} onClick=${e => { e.stopPropagation(); c.mindMap(p.id); }}>${I('account_tree', {fontSize: 20})}<//><//><//><//>`; })}<//>
+      <//><//>`}
+    ${note}
+  <//>`;
+}
+
+function Logs({c}) {
+  const s = c.all, [kinds, setKinds] = useState(['block', 'task', 'event', 'project']), [from, setFrom] = useState(day(-6)), [to, setTo] = useState(TODAY), [pf, setPf] = useState('all');
+  const all = useMemo(() => {
+    const e = s.blocks.map(b => { const it = byId(s, b.item); return {k: 'block', day: b.day, t: b.start, id: b.id, item: b.item, name: it ? it.name : 'Block', min: b.min, kind: b.kind, mode: b.mode, p: projOf(it)}; });
+    s.items.forEach(i => { if (i.type === 'event' && i.when && (i.when < TODAY || i.when === TODAY && (!i.time || i.time <= hm(new Date().getHours() * 60 + new Date().getMinutes())))) e.push({k: 'event', day: i.when, t: i.time || '', id: 'e' + i.id, item: i.id, name: i.name, min: i.time ? +i.dur || 60 : 0, p: projOf(i)}); });
+    s.items.forEach(i => (i.past || []).forEach(d => e.push({k: 'event', day: d, t: i.time || '', id: 'e' + i.id + d, item: i.id, name: i.name, min: i.time ? +i.dur || 60 : 0, p: projOf(i)})));
+    s.items.forEach(i => (i.done || []).forEach(ts => { const d = new Date(ts); e.push({k: 'task', day: iso(d), t: hm(d.getHours() * 60 + d.getMinutes()), id: 'r' + i.id + ts, item: i.id, name: i.name, type: i.type, p: projOf(i)}); }));
+    s.items.forEach(i => { if (!i.doneAt || i.status !== 'done') return; const d = new Date(i.doneAt), k = i.type === 'task' ? 'task' : i.type === 'project' || i.type === 'milestone' ? 'project' : null;
+      if (k) e.push({k, day: iso(d), t: hm(d.getHours() * 60 + d.getMinutes()), id: 'd' + i.id, item: i.id, name: i.name, type: i.type, p: projOf(i)}); });
+    return e.sort((a, b) => (b.day + b.t).localeCompare(a.day + a.t)); }, [s]);
+  const rows = all.filter(e => kinds.includes(e.k) && (!from || e.day >= from) && (!to || e.day <= to) && (pf === 'all' || e.p === pf));
+  const days = [...new Set(rows.map(r => r.day))];
+  const range = (f, t) => { setFrom(f); setTo(t); };
+  const icon = e => e.k === 'block' ? I(e.mode === 'timer' ? 'timer' : 'play_circle', {color: KIND[e.kind]}) : e.k === 'task' ? I('check_circle', {color: 'success.main'}) : e.k === 'event' ? I('event', {color: EVENT}) : I('flag', {color: '#4fc3f7'});
+  return html`<${Box}>
+    <${Head} icon="history" color="#b0bec5" title="Logs"/>
+    <${Stack} direction="row" sx=${{flexWrap: 'wrap', gap: 1.5, mb: 1.5}} useFlexGap alignItems="center">
+      <${ToggleButtonGroup} size="small" value=${kinds} onChange=${(e, v) => setKinds(v)} aria-label="What to show">
+        <${ToggleButton} value="block">Blocks<//><${ToggleButton} value="task">Tasks<//><${ToggleButton} value="event">Events<//><${ToggleButton} value="project">Projects<//><//>
+      <${TextField} select size="small" label="Project" value=${pf} onChange=${e => setPf(e.target.value)} sx=${{minWidth: 160}}>
+        <${MenuItem} value="all">Any project<//>${projects(s).map(p => html`<${MenuItem} key=${p.id} value=${p.id}>${p.name}<//>`)}<//>
+      <${DateField} label="From" value=${from} onChange=${setFrom} sx=${{width: 170}}/>
+      <${DateField} label="To" value=${to} onChange=${setTo} sx=${{width: 170}}/>
+    <//>
+    <${Stack} direction="row" spacing=${1} sx=${{mb: 3}}>
+      ${[['Today', TODAY, TODAY], ['7 days', day(-6), TODAY], ['30 days', day(-29), TODAY], ['All', '', '']].map(([l, f, t]) => html`<${Chip} key=${l} label=${l} onClick=${() => range(f, t)}
+        variant=${from === f && to === t ? 'filled' : 'outlined'} color=${from === f && to === t ? 'primary' : 'default'}/>`)}
+    <//>
+    ${days.length ? days.map(dd => { const r = rows.filter(x => x.day === dd), b = r.filter(x => x.k === 'block');
+      return html`<${Box} key=${dd} sx=${{mb: 2.5}}>
+        <${Stack} direction="row" justifyContent="space-between" sx=${{mb: .75}}>
+          <${Typography} fontWeight="700">${fmtDay(dd)}<//>
+          <${Typography} variant="body2" color="text.secondary">${b.length ? b.length + (b.length > 1 ? ' blocks, ' : ' block, ') + dur(b.reduce((n, x) => n + x.min, 0)) : ''}<//>
+        <//>
+        <${Paper} elevation=${1}>${r.map(e => { const p = e.p && byId(s, e.p);
+          return html`<${Box} key=${e.id} onClick=${() => byId(s, e.item) && c.open(e.item)} sx=${{display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, cursor: 'pointer',
+              borderBottom: 1, borderColor: 'divider', '&:last-child': {borderBottom: 0}, '&:hover': {bgcolor: 'action.hover'}}}>
+            ${icon(e)}
+            <${Typography} variant="body2" color="text.secondary" sx=${{width: 44, flex: 'none'}}>${e.t}<//>
+            <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} variant="body2" fontWeight="500" noWrap>${e.k === 'project' ? (e.type === 'milestone' ? 'Milestone reached: ' : 'Project done: ') + e.name : e.name}<//>
+              ${p && e.p !== e.item ? html`<${Typography} variant="caption" color="text.secondary" noWrap component="div">${p.name}<//>` : null}<//>
+            ${e.k === 'block' ? html`<${Chip} size="small" label=${e.min + 'm ' + e.kind} sx=${{bgcolor: KIND[e.kind], color: ON}}/>` : e.k === 'event' && e.min ? html`<${Chip} size="small" label=${dur(e.min)} sx=${{bgcolor: EVENT, color: ON}}/>` : null}
+          <//>`; })}<//>
+      <//>`; }) : html`<${Typography} color="text.secondary" sx=${{py: 6, textAlign: 'center'}}>Nothing logged in this range.<//>`}
+  <//>`;
+}
+
+function Archive({c}) {
+  const s = c.all, [q, setQ] = useState('');
+  const rows = s.items.filter(i => i.archived && i.name.toLowerCase().includes(q.toLowerCase())).sort((a, b) => b.archived - a.archived);
+  const groups = [['project', 'Projects', 'flag', '#4fc3f7'], ['habit', 'Habits', 'local_fire_department', '#ef6c4a'], ['task', 'Tasks', 'check_circle', '#66bb6a'], ['milestone', 'Milestones', 'flag', '#90a4ae']];
+  const sub = i => { if (i.type === 'project') { const t = s.items.filter(x => x.project === i.id && x.type === 'task'), h = s.items.filter(x => x.project === i.id && x.type === 'habit');
+      return t.filter(x => x.status === 'done').length + ' of ' + t.length + ' tasks done' + (h.length ? ', ' + h.length + (h.length > 1 ? ' habits' : ' habit') : ''); }
+    const p = i.project && byId(s, i.project); return [p ? p.name : '', i.type === 'habit' ? i.repeat + ', ' + (i.log || []).length + ' days logged' : ''].filter(Boolean).join(', '); };
+  return html`<${Box}>
+    <${Head} icon="inventory_2" color="#90a4ae" title="Archive"/>
+    <${TextField} size="small" placeholder="Search the archive" value=${q} onChange=${e => setQ(e.target.value)} sx=${{mb: 3, minWidth: 280}}
+      InputProps=${{startAdornment: I('search', {mr: 1, color: 'text.secondary'})}} inputProps=${{'aria-label': 'Search the archive'}}/>
+    ${rows.length ? groups.map(([t, label, icon, col]) => { const g = rows.filter(i => i.type === t); return g.length ? html`<${Box} key=${t} sx=${{mb: 3}}>
+        <${Typography} variant="body2" color="text.secondary" fontWeight="600" sx=${{mb: 1}}>${label}<//>
+        <${Paper} elevation=${1}>${g.map(i => html`<${Box} key=${i.id} onClick=${() => c.open(i.id)} sx=${{display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, cursor: 'pointer',
+            borderBottom: 1, borderColor: 'divider', '&:last-child': {borderBottom: 0}, '&:hover': {bgcolor: 'action.hover'}}}>
+          ${I(icon, {color: col})}
+          <${Box} sx=${{flex: 1, minWidth: 0}}>
+            <${Typography} fontWeight="500" noWrap>${i.name}<//>
+            <${Typography} variant="caption" color="text.secondary" noWrap component="div">${[sub(i), 'archived ' + fmtDay(iso(new Date(i.archived))).replace(/^[A-Z]/, x => x.toLowerCase())].filter(Boolean).join(', ')}<//>
+          <//>
+          <${Button} size="small" startIcon=${I('unarchive', {fontSize: 18})} onClick=${e => { e.stopPropagation(); c.archive(i.id); }}>Restore<//>
+          <${IconButton} size="small" aria-label=${'Delete ' + i.name} onClick=${e => { e.stopPropagation(); c.del(i.id); }} sx=${{color: 'text.disabled', '&:hover': {color: 'error.main'}}}>${I('delete', {fontSize: 19})}<//>
+        <//>`)}<//><//>` : null; })
+      : html`<${Typography} color="text.secondary" sx=${{py: 6, textAlign: 'center'}}>${q ? 'Nothing in the archive matches.' : 'Nothing archived. Use the archive button in a panel to retire a project, habit or task.'}<//>`}
+  <//>`;
+}
+
+/* images: shrink before saving, browser storage is small */
+const shrink = file => new Promise((ok, no) => { const r = new FileReader(); r.onerror = no; r.onload = () => { const img = new Image(); img.onerror = no;
+  img.onload = () => { const k = Math.min(1, 1200 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); ok(cv.toDataURL('image/jpeg', .8)); };
+  img.src = r.result; }; r.readAsDataURL(file); });
+function Images({c, it}) {
+  const [big, setBig] = useState(null), imgs = it.images || [];
+  const addFiles = files => [...files].filter(f => f.type.startsWith('image/')).forEach(f => shrink(f).then(u => c.upd(it.id, x => ({images: [...(x.images || []), u]}))).catch(() => {}));
+  return html`<${Box} onDragOver=${e => e.preventDefault()} onDrop=${e => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
+    <${Stack} direction="row" alignItems="center" justifyContent="space-between" sx=${{mb: 1}}>
+      <${Typography} variant="body2" fontWeight="600">Images<//>
+      <${Button} size="small" component="label" startIcon=${I('add_photo_alternate')}>Add<input hidden type="file" accept="image/*" multiple onChange=${e => { addFiles(e.target.files); e.target.value = ''; }}/><//>
+    <//>
+    ${imgs.length ? html`<${Box} sx=${{display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 1}}>${imgs.map((u, k) => html`<${Box} key=${k} sx=${{position: 'relative', aspectRatio: '1', borderRadius: 1.5, overflow: 'hidden', bgcolor: 'action.hover'}}>
+        <img src=${u} alt="" onClick=${() => setBig(u)} style=${{width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in', display: 'block'}}/>
+        <${IconButton} size="small" aria-label="Remove image" onClick=${() => c.upd(it.id, x => ({images: x.images.filter((_, j) => j !== k)}))}
+          sx=${{position: 'absolute', top: 4, right: 4, bgcolor: 'rgba(0,0,0,.55)', color: '#fff', '&:hover': {bgcolor: 'rgba(0,0,0,.75)'}}}>${I('close', {fontSize: 16})}<//>
+      <//>`)}<//>`
+    : html`<${Box} sx=${{border: '1px dashed', borderColor: 'divider', borderRadius: 2, p: 2, textAlign: 'center'}}><${Typography} variant="body2" color="text.secondary">Drop, paste or add images<//><//>`}
+    <${Dialog} open=${!!big} onClose=${() => setBig(null)} maxWidth="lg">${big ? html`<img src=${big} alt="" style=${{display: 'block', maxWidth: '100%', maxHeight: '85vh'}}/>` : null}<//>
+  <//>`;
+}
+
+function Quick({onAdd, label}) {
+  const [t, setT] = useState('');
+  return html`<${Box} component="form" onSubmit=${e => { e.preventDefault(); if (t.trim()) { onAdd(t.trim()); setT(''); } }} sx=${{px: 1}}>
+    <${TextField} fullWidth size="small" variant="standard" placeholder=${label} value=${t} onChange=${e => setT(e.target.value)}
+      InputProps=${{disableUnderline: true, startAdornment: I('add', {fontSize: 18, mr: 1, color: 'text.secondary'})}} inputProps=${{'aria-label': label}}/><//>`;
+}
+
+function Panel({c}) {
+  const it = c.openId && byId(c.all, c.openId), s = c.all;
+  const set = p => c.upd(it.id, p);
+  const f = (label, key, type, more) => type === 'time' ? html`<${TimeField} label=${label} disabled=${more && more.disabled} value=${(it && it[key]) || ''} onChange=${v => set({[key]: v || null})}/>` : type === 'date' ? html`<${DateField} label=${label} value=${(it && it[key]) || ''} onChange=${v => set({[key]: v || null})}/>` : html`<${TextField} size="small" fullWidth label=${label} type=${type || 'text'} value=${(it && it[key]) || ''}
+    onChange=${e => set({[key]: e.target.value || null})} InputLabelProps=${{shrink: true}} ...${more || {}}/>`;
+  const opts = (label, key, list, more, dis) => html`<${TextField} select size="small" fullWidth disabled=${!!dis} label=${label} value=${(it && it[key]) || ''} onChange=${e => set({[key]: e.target.value || null, ...(more ? more(e.target.value) : {})})}>
+    ${list.map(([v, l]) => html`<${MenuItem} key=${v} value=${v}>${l}<//>`)}<//>`;
+  const toggleMs = m => c.upd(m.id, x => msDone(s, x) ? {status: 'todo', doneAt: null} : {status: 'done', doneAt: Date.now()});
+  const section = (m, tasks, pid) => html`<${Box} key=${m ? m.id : 'loose'} sx=${{mb: 1.5}}>
+    <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{px: .5}}>
+      ${m ? html`<${IconButton} size="small" aria-label="Milestone done" onClick=${() => toggleMs(m)} color=${msDone(s, m) ? 'success' : 'default'}>${I(msDone(s, m) ? 'check_circle' : 'flag')}<//>` : I('inventory_2', {color: 'text.secondary', mx: .75})}
+      <${Typography} fontWeight="700" sx=${{flex: 1, cursor: m ? 'pointer' : 'default', color: m && msDone(s, m) ? 'success.main' : 'text.primary'}} onClick=${() => m && c.open(m.id)}>${m ? m.name + ptsLabel(msPts(s, m.id)) : 'No milestone'}<//>
+      <${Typography} variant="caption" color="text.secondary">${tasks.filter(t => t.status === 'done').length} of ${tasks.length} done<//>
+    <//>
+    <${Paper} elevation=${1} sx=${{p: .5, mt: .5}}>${tasks.map(t => html`<${Row} key=${t.id} c=${c} it=${t}/>`)}
+      <${Quick} label=${m ? 'Add a task to ' + m.name : 'Add a task'} onAdd=${n => c.add({type: 'task', name: n, status: 'todo', project: pid, milestone: m ? m.id : null})}/><//>
+  <//>`;
+  let body = null;
+  if (it) {
+    const pList = [['', 'No project'], ...projects(s).map(p => [p.id, p.name])];
+    const mList = it.project ? [['', 'No milestone'], ...milestones(s, it.project).map(m => [m.id, m.name])] : [['', 'No milestone']];
+    body = html`<${Stack} spacing=${2.25} sx=${{p: 2.5}}>
+      <${TextField} fullWidth label="Name" value=${it.name} onChange=${e => set({name: e.target.value})} multiline autoFocus=${!!it.fresh && !it.name}/>
+      ${it.type === 'project' ? html`<${TextField} fullWidth multiline label="When is this done?" value=${it.doneWhen || ''} onChange=${e => set({doneWhen: e.target.value})}/>` : null}
+      <${ToggleButtonGroup} exclusive fullWidth size="small" value=${it.type} onChange=${(e, v) => v && set(v === 'habit' ? {type: v, repeat: it.repeat || 'daily', status: 'todo', project: null, milestone: null} : v === 'event' ? {type: v, status: 'todo', dur: it.dur || 60} : {type: v, status: it.status === 'inbox' && v !== 'task' ? 'todo' : it.status})}>
+        <${ToggleButton} value="task">Task<//><${ToggleButton} value="project">Project<//><${ToggleButton} value="milestone">Milestone<//><${ToggleButton} value="habit">Habit<//><${ToggleButton} value="event">Event<//><//>
+      ${it.type === 'event' ? html`${opts('Project', 'project', pList)}
+        <${Box} sx=${{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5}}><${DateField} label="When" value=${it.when || ''} onChange=${v => set({when: v || null, start: v || null})}/>${f('Time', 'time', 'time', {disabled: !it.when})}<//>
+        ${opts('Repeats', 'repeat', [['', 'Never'], ['daily', 'Every day'], ['weekly', 'Every week'], ['monthly', 'Every month'], ['yearly', 'Every year']], v => ({start: it.when || TODAY, ...(v && !it.when ? {when: TODAY} : {})}))}
+        ${opts('Length', 'dur', [[15, '15 minutes'], [30, '30 minutes'], [45, '45 minutes'], [60, '1 hour'], [90, '1.5 hours'], [120, '2 hours'], [180, '3 hours'], [240, '4 hours']])}` : null}
+      ${it.type !== 'habit' && it.type !== 'event' ? opts('Status', 'status', STATUS.map(v => [v, SLABEL[v]]), v => ({doneAt: v === 'done' ? Date.now() : null})) : null}
+      ${it.type === 'task' ? html`<${Box} sx=${{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5}}>
+          ${opts('Project', 'project', pList, () => ({milestone: null}))}${opts('Milestone', 'milestone', mList, null, !it.project)}
+          ${f('When', 'when', 'date')}${f('Time', 'time', 'time', {disabled: !it.when})}
+          <${Box} sx=${{gridColumn: '1 / -1'}}>
+            <${Typography} variant="body2" color="text.secondary" sx=${{mb: .75}}>Effort points<//>
+            <${ToggleButtonGroup} exclusive fullWidth size="small" value=${it.pts || null} onChange=${(e, v) => set({pts: v})} aria-label="Effort points">
+              ${[1, 2, 3, 5, 8].map(v => html`<${ToggleButton} key=${v} value=${v} sx=${{fontSize: 15}}>${v}<//>`)}<//>
+          <//>
+          ${opts('Repeats', 'repeat', [['', 'Never'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']], v => v && !it.when ? {when: TODAY} : {})}
+          ${it.status === 'waiting' ? f('Check back', 'check', 'date') : null}
+        <//>
+        <${Button} variant="outlined" startIcon=${I('play_arrow')} onClick=${() => { c.setFocus(it.id); c.close(); c.go('now'); }}>Start a block on this<//>
+        ${(() => { const tb = s.blocks.filter(b => b.item === it.id).sort((a, b) => (b.day + b.start).localeCompare(a.day + a.start)); return tb.length ? html`<${Box}>
+          <${Stack} direction="row" sx=${{mb: .75}}><${Typography} variant="body2" fontWeight="600" sx=${{flex: 1}}>Blocks on this task<//>
+            <${Typography} variant="body2" color="text.secondary">${tb.length}, ${dur(tb.reduce((n, b) => n + b.min, 0))} in all<//><//>
+          <${Paper} elevation=${1}>${tb.map(b => html`<${Stack} key=${b.id} direction="row" alignItems="center" spacing=${1.5} sx=${{px: 1.5, py: .75, borderBottom: 1, borderColor: 'divider', '&:last-child': {borderBottom: 0}}}>
+            <${Box} sx=${{flex: 1, minWidth: 0}}><${Typography} variant="body2">${fmtDay(b.day)}, ${b.start}<//>
+              ${b.notes ? html`<${Typography} variant="caption" color="text.secondary" component="div" sx=${{whiteSpace: 'pre-wrap'}}>${b.notes}<//>` : null}<//>
+            <${Chip} size="small" label=${b.min + 'm ' + b.kind} sx=${{bgcolor: KIND[b.kind], color: ON}}/><//>`)}<//><//>` : null; })()}` : null}
+      ${it.type === 'milestone' ? html`${opts('Project', 'project', pList)}${f('Due', 'due', 'date')}${section(it, msTasks(s, it.id), it.project)}` : null}
+      ${it.type === 'project' ? html`<${Box} sx=${{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5}}>${f('Starts', 'startDate', 'date')}${f('Due', 'due', 'date')}<//>
+        <${Line} c=${c} p=${it}/>
+        <${Box}>${milestones(s, it.id).map(m => section(m, msTasks(s, m.id), it.id))}
+          ${section(null, tasksOf(s, it.id).filter(t => !t.milestone), it.id)}
+          <${Paper} elevation=${1} sx=${{p: .5}}><${Quick} label="Add a milestone" onAdd=${n => c.add({type: 'milestone', name: n, status: 'todo', project: it.id})}/><//><//>` : null}
+      ${it.type === 'habit' ? html`
+        <${Box} sx=${{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5}}>${opts('Repeats', 'repeat', [['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']])}${f('Starts', 'from', 'date')}<//>
+        ${it.repeat === 'weekly' ? html`<${ToggleButtonGroup} fullWidth size="small" value=${daysOn(it, TODAY)} aria-label="Days of the week"
+            onChange=${(e, v) => v && v.length && set(setDays(it, v))}>
+          ${[1, 2, 3, 4, 5, 6, 0].map(d => html`<${ToggleButton} key=${d} value=${d} aria-label=${DOW[d]}
+            sx=${{'&.Mui-selected, &.Mui-selected:hover': {bgcolor: HABIT, color: ON}}}>${DOW[d].slice(0, 2)}<//>`)}<//>` : null}
+        <${Box} sx=${{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5}}>${f('Time', 'time', 'time')}${opts('Length', 'dur', [['', 'Not set'], ...[5, 10, 15, 30, 45, 60].map(v => [v, v + ' minutes'])])}<//>
+        <${Paper} elevation=${1} sx=${{p: 2}}><${Stack} direction="row" spacing=${1} alignItems="center" sx=${{mb: 1.5}}>${I('local_fire_department', {color: 'dojo.main'})}
+          <${Typography} fontWeight="700" sx=${{flex: 1}}>Heatmap<//><${Typography} variant="body2" color="text.secondary">${(it.log || []).filter(d => d >= day(-154)).length} days in 22 weeks<//><//>
+          <${Heat} log=${it.log}/><${Typography} variant="body2" color="text.secondary" sx=${{mt: 1}}>${streak(it) ? streak(it) + ' in a row' : 'No streak yet'}<//><//>` : null}
+      ${it.type === 'task' || it.type === 'project' ? html`<${Images} c=${c} it=${it}/>` : null}
+      <${TextField} fullWidth multiline minRows=${3} label="Notes" value=${it.notes || ''} onChange=${e => set({notes: e.target.value})}/>
+    <//>`;
+  }
+  const onPaste = e => { if (!it || !(it.type === 'task' || it.type === 'project')) return; const fs = [...(e.clipboardData || {}).files || []].filter(f => f.type.startsWith('image/'));
+    if (fs.length) { e.preventDefault(); fs.forEach(f => shrink(f).then(u => c.upd(it.id, x => ({images: [...(x.images || []), u]})))); } };
+  return html`<${Drawer} anchor="right" open=${!!it} onClose=${c.close} sx=${{zIndex: t => t.zIndex.modal}} PaperProps=${{sx: {width: {xs: '100%', sm: 460}}, onPaste}}>
+    <${Toolbar} sx=${{borderBottom: 1, borderColor: 'divider', gap: 1}}>
+      <${Typography} fontWeight="700" sx=${{flex: 1}}>${it ? it.reminder ? 'Reminder' : {task: 'Task', project: 'Project', milestone: 'Milestone', habit: 'Habit', event: 'Event'}[it.type] : ''}<//>
+      ${it && it.type === 'task' ? html`<${Star} c=${c} it=${it}/>` : null}
+      ${it && it.type === 'habit' ? (() => { const d = habitDone(it), when = it.repeat === 'monthly' ? 'this month' : 'today';
+        return html`<${Button} size="small" variant=${d ? 'outlined' : 'contained'} color="success" startIcon=${I(d ? 'check' : 'add')} onClick=${() => markHabit(c, it)}>${d ? 'Done ' + when : 'Mark ' + when}<//>`; })() : null}
+      ${it && it.type !== 'habit' && (it.type !== 'event' || it.reminder) ? html`<${Button} size="small" variant=${it.status === 'done' ? 'outlined' : 'contained'} color="success" onClick=${() => c.toggle(it)}>${it.status === 'done' ? 'Reopen' : 'Mark done'}<//>` : null}
+      ${it ? html`<${Tooltip} title=${it.archived ? 'Restore from the archive' : 'Archive'}><${IconButton} aria-label=${it.archived ? 'Restore' : 'Archive'} onClick=${() => c.archive(it.id)}>${I(it.archived ? 'unarchive' : 'archive')}<//><//>` : null}
+      ${it ? html`<${Tooltip} title="Delete"><${IconButton} aria-label="Delete" onClick=${() => c.del(it.id)}>${I('delete')}<//><//>` : null}
+      <${IconButton} aria-label="Close" onClick=${c.close}>${I('close')}<//>
+    <//>
+    ${body}
+  <//>`;
+}
+
+function Account({open, onClose, user, sync, run}) {
+  const [email, setEmail] = useState(''), [pw, setPw] = useState(''), [err, setErr] = useState(''), [wait, setWait] = useState(false);
+  const signIn = async e => { e.preventDefault(); setWait(true); setErr('');
+    const {error} = await SB.auth.signInWithPassword({email: email.trim(), password: pw}); setWait(false);
+    if (error) setErr(error.message); else { setPw(''); onClose(); } };
+  const ago = sync.at ? Math.max(0, Math.round((Date.now() - sync.at) / 60000)) : null;
+  return html`<${Dialog} open=${open} onClose=${onClose} maxWidth="xs" fullWidth>
+    <${Box} sx=${{p: 3}}>
+      ${user ? html`
+        <${Typography} sx=${{fontSize: 20, fontWeight: 500, mb: .5}}>Sync<//>
+        <${Typography} color="text.secondary" sx=${{mb: 2.5}}>${user.email}<//>
+        <${Stack} direction="row" alignItems="center" spacing=${1} sx=${{mb: 3}}>
+          ${I(sync.st === 'err' || sync.st === 'offline' ? 'cloud_alert' : sync.st === 'busy' ? 'cloud_sync' : 'cloud_done', {color: sync.st === 'err' ? 'error.main' : sync.st === 'offline' ? 'warning.main' : 'success.main'})}
+          <${Typography}>${sync.st === 'busy' ? 'Syncing' : sync.st === 'err' ? 'Sync failed' : sync.st === 'offline' ? 'Offline, changes go up when you are back online' : ago === null ? 'Synced' : ago < 1 ? 'Synced just now' : 'Synced ' + ago + ' min ago'}<//><//>
+        ${sync.st === 'err' && sync.msg ? html`<${Alert} severity="error" sx=${{mb: 2}}>${sync.msg}<//>` : null}
+        <${Stack} direction="row" spacing=${1} justifyContent="flex-end">
+          <${Button} color="inherit" onClick=${() => { SB.auth.signOut(); onClose(); }}>Sign out<//>
+          <${Button} variant="contained" onClick=${run}>Sync now<//><//>`
+      : html`<form onSubmit=${signIn}>
+        <${Typography} sx=${{fontSize: 20, fontWeight: 500, mb: 2.5}}>Sign in<//>
+        <${TextField} fullWidth label="Email" type="email" autoComplete="email" value=${email} onChange=${e => setEmail(e.target.value)} sx=${{mb: 2}} autoFocus/>
+        <${TextField} fullWidth label="Password" type="password" autoComplete="current-password" value=${pw} onChange=${e => setPw(e.target.value)} sx=${{mb: 2}}/>
+        ${err ? html`<${Alert} severity="error" sx=${{mb: 2}}>${err}<//>` : null}
+        <${Stack} direction="row" spacing=${1} justifyContent="flex-end">
+          <${Button} color="inherit" onClick=${onClose}>Cancel<//>
+          <${Button} type="submit" variant="contained" disabled=${wait || !email || !pw}>Sign in<//><//><//>`}
+    <//><//>`;
+}
+
+function App() {
+  /* theme: Light, Dark, or Auto (follows claude.ai when inside it, else the device) */
+  const sysMode = () => document.documentElement.dataset.theme ? themeMode() : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  const [pref, setPrefS] = useState(() => localStorage.getItem('one-table-theme') || 'auto'), [sys, setSys] = useState(sysMode), [themeMenu, setThemeMenu] = useState(null);
+  const setPref = v => { setPrefS(v); localStorage.setItem('one-table-theme', v); setThemeMenu(null); };
+  const mode = pref === 'auto' ? sys : pref;
+  useEffect(() => { const f = () => setSys(sysMode()), o = new MutationObserver(f), mq = matchMedia('(prefers-color-scheme: light)');
+    o.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']}); mq.addEventListener('change', f); return () => { o.disconnect(); mq.removeEventListener('change', f); }; }, []);
+  const theme = useMemo(() => makeTheme(mode), [mode]);
+  const [s, setS] = useState(load), [full, setFull] = useState(false);
+  useEffect(() => { setFull(!save(s)); }, [s]);
+  useEffect(() => { if (s.items.some(stale)) setS(x => ({...x, items: x.items.map(roll)})); }, [s]);
+
+  /* sync with Supabase when signed in */
+  const [user, setUser] = useState(null), [sync, setSync] = useState({st: 'off', at: null}), [acct, setAcct] = useState(false);
+  const sref = React.useRef(s), snapRef = React.useRef(null), busy = React.useRef(false), again = React.useRef(false), tmrS = React.useRef(null);
+  sref.current = s;
+  useEffect(() => { if (!SB) return; SB.auth.getSession().then(({data}) => setUser(data.session ? data.session.user : null));
+    const {data} = SB.auth.onAuthStateChange((e, ses) => setUser(ses ? ses.user : null)); return () => data.subscription.unsubscribe(); }, []);
+  const runSync = async () => {
+    if (!SB || !snapRef.current) return; if (busy.current) { again.current = true; return; }
+    busy.current = true; setSync(x => ({...x, st: 'busy'}));
+    try {
+      const snap = snapRef.current, {got, max} = await syncPull(snap);
+      const merged = syncMerge(sref.current, got, snap); if (merged) { sref.current = merged; setS(merged); }
+      const {cur, done} = await syncPush(sref.current, snap);
+      done.forEach(([t, id, j]) => { if (j === null) delete snap[t][id]; else snap[t][id] = j; }); snap.state = cur.state;
+      if (max) snap.since = max; saveSnap(snap); setSync({st: 'ok', at: Date.now()});
+    } catch (e) { setSync(x => ({...x, st: navigator.onLine ? 'err' : 'offline', msg: String(e && e.message || e)})); }
+    busy.current = false; if (again.current) { again.current = false; runSync(); }
+  };
+  useEffect(() => { if (!user) { snapRef.current = null; setSync({st: 'off', at: null}); return; }
+    snapRef.current = loadSnap(user.id); runSync();
+    const f = () => { if (document.visibilityState === 'visible') runSync(); }, iv = setInterval(f, 20000);
+    document.addEventListener('visibilitychange', f); addEventListener('online', f); addEventListener('focus', f);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', f); removeEventListener('online', f); removeEventListener('focus', f); }; }, [user && user.id]);
+  useEffect(() => { if (!user) return; clearTimeout(tmrS.current); tmrS.current = setTimeout(runSync, 1200); }, [s]);
+  const [view, setView] = useState(hashView());
+  useEffect(() => { const f = () => setView(hashView()); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
+  const [openId, setOpenId] = useState(null), [pf, setPf] = useState('all'), [navOpen, setNavOpen] = useState(false), [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const wide = useMediaQuery('(min-width:900px)');
+  const upd = (id, p) => setS(x => ({...x, items: x.items.map(i => i.id === id ? {...i, ...(typeof p === 'function' ? p(i) : p)} : i)}));
+  const add = it => { const id = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e4); setS(x => ({...x, items: [...x.items, {id, ...it}]})); return id; };
+  const toggle = it => upd(it.id, x => x.type === 'task' && x.repeat && x.status !== 'done' ? {when: nextDue(x), status: 'todo', done: [...(x.done || []), Date.now()]} : x.status === 'done' ? {status: 'todo', doneAt: null} : {status: 'done', doneAt: Date.now()});
+  const finish = taskDone => setS(x => { const r = x.running; if (!r) return x; const st = new Date(r.start), min = Math.max(1, Math.round(elapsed(r, Date.now()) / 60000));
+    return {...x, running: null, blocks: [...x.blocks, {id: 'b' + r.start, item: r.item, day: iso(st), start: hm(st.getHours() * 60 + st.getMinutes()), min, kind: r.kind, mode: r.mode, ...(x.scratch && x.scratch.trim() ? {notes: x.scratch.trim()} : {})}], scratch: '',
+      items: taskDone ? x.items.map(i => i.id !== r.item ? i : i.type === 'habit' ? (habitDone(i) ? i : {...i, log: [...(i.log || []), TODAY]}) : {...i, status: 'done', doneAt: Date.now()}) : x.items}; });
+  const go = v => { location.hash = v; setView(v); setNavOpen(false); setMapId(null); };
+  const [undo, setUndo] = useState(null), [focus, setFocus] = useState(null), [mapId, setMapId] = useState(null);
+  const del = id => { const it = byId(s, id); if (!it) return; const kill = new Set([id]);
+    if (it.type === 'project') s.items.forEach(i => { if (i.project === id) kill.add(i.id); });
+    const n = kill.size - 1;
+    setS({...s, items: s.items.filter(i => !kill.has(i.id)).map(i => kill.has(i.milestone) ? {...i, milestone: null} : i),
+      top: s.top ? {...s.top, ids: s.top.ids.map(x => kill.has(x) ? null : x)} : s.top, running: s.running && kill.has(s.running.item) ? null : s.running});
+    setOpenId(null); setUndo({prev: s, msg: 'Deleted ' + it.name + (n ? ', with the ' + n + (n > 1 ? ' items' : ' item') + ' in it' : '')}); };
+  const archive = id => { const it = byId(s, id); if (!it) return; const on = !it.archived;
+    setS({...s, items: s.items.map(i => i.id === id ? {...i, archived: on ? Date.now() : null} : i),
+      top: on && s.top ? {...s.top, ids: s.top.ids.map(x => x === id ? null : x)} : s.top, running: on && s.running && s.running.item === id ? null : s.running});
+    if (on) setOpenId(null); setUndo({prev: s, msg: (on ? 'Archived ' : 'Restored ') + it.name}); };
+  const vis = useMemo(() => withStarts({...s, items: s.items.filter(i => !archived(s, i))}), [s]);
+  const runName = s.running && (byId(s, s.running.item) || {}).name;
+  /* the next timed item today that starts after now: tasks, events and habits not yet done */
+  const nd = new Date(now), nowM = nd.getHours() * 60 + nd.getMinutes();
+  const next = vis.items.filter(i => i.time && toMin(i.time) > nowM && (i.type === 'habit' ? (!i.from || i.from <= TODAY) && habitOn(i, TODAY) && !(i.log || []).includes(TODAY)
+      : (i.type === 'task' || i.type === 'event') && i.when === TODAY && i.status !== 'done' && i.status !== 'inbox'))
+    .sort((a, b) => a.time.localeCompare(b.time))[0];
+  const nextBtn = (small) => next ? html`<${Tooltip} title=${'Next: ' + next.name}><${ButtonBase} onClick=${() => setOpenId(next.id)}
+      sx=${{mr: 1, px: 1.25, height: 32, borderRadius: '16px', bgcolor: 'rgba(255,255,255,.16)', color: 'inherit', gap: 1, maxWidth: small ? 190 : 460, minWidth: 0, font: 'inherit', fontSize: 14, '&:hover': {bgcolor: 'rgba(255,255,255,.26)'}}}>
+      ${I(next.type === 'event' ? 'event' : next.type === 'habit' ? 'local_fire_department' : 'schedule', {fontSize: 18})}
+      <${Box} component="span" sx=${{fontWeight: 600, fontVariantNumeric: 'tabular-nums'}}>${next.time}<//>
+      <${Box} component="span" sx=${{fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0}}>${next.name}<//>
+      ${small ? null : html`<${Box} component="span" sx=${{opacity: .75, whiteSpace: 'nowrap'}}>in ${dur(toMin(next.time) - nowM)}<//>`}
+    <//><//>` : null;
+  const pipVals = () => { const r = s.running; if (!r) return {label: 'Nothing running', time: '--:--', name: 'Start a block in tskmngr', pct: null};
+    const el = elapsed(r, now), left = r.planned ? r.planned * 60000 - el : null;
+    return {label: (r.pausedAt ? 'Paused, ' : '') + (r.mode === 'timer' ? 'Timer' : r.planned + ' minute block') + ', ' + r.kind + (left != null && left < 0 ? ', over' : ''), time: (left != null && left < 0 ? '+' : '') + clock(left != null ? left : el),
+      name: runName || 'Block', pct: r.planned ? Math.min(100, el / (r.planned * 600)) : null, over: left != null && left < 0}; };
+  useEffect(() => { if (PIP.mode) pipDraw(pipVals()); });
+  const popout = () => pipOpen(pipVals()).then(r => r !== 'top' && setUndo({prev: null, msg: r === 'win' ? 'Timer opened in its own window. Click Float on top in it' : 'This browser blocked the pop-out window'}));
+  const pause = () => setS(x => { const r = x.running; if (!r) return x; const t = Date.now();
+    return {...x, running: r.pausedAt ? {...r, paused: (r.paused || 0) + t - r.pausedAt, pausedAt: null} : {...r, pausedAt: t}}; });
+  const move = (id, beforeId, patch) => setS(x => { const it = x.items.find(i => i.id === id); if (!it) return x; const rest = x.items.filter(i => i.id !== id), moved = {...it, ...(patch || {})};
+    const k = beforeId ? rest.findIndex(i => i.id === beforeId) : -1; if (k < 0) rest.push(moved); else rest.splice(k, 0, moved); return {...x, items: rest}; });
+  const mindMap = id => { if (id && view !== 'projects') go('projects'); setMapId(id); window.scrollTo(0, 0); };
+  const c = {pause, move, mapId, mindMap, popout, focus, setFocus, s: vis, all: s, archive, set: setS, upd, add, toggle, finish, go, del, now, open: setOpenId, openId, close: () => { const it = openId && byId(s, openId);
+    if (it && it.fresh) setS(x => ({...x, items: it.name.trim() ? x.items.map(i => i.id === it.id ? (({fresh, ...r}) => r)(i) : i) : x.items.filter(i => i.id !== it.id)}));
+    setOpenId(null); }, pf, setPf};
+  const count = v => v === 'inbox' ? vis.items.filter(i => i.status === 'inbox').length : v === 'archive' ? s.items.filter(i => i.archived).length || '' : v === 'today' ? vis.items.filter(i => isTodayTask(i) && i.status !== 'done').length
+    : v === 'reminders' ? vis.items.filter(i => i.reminder && i.when === TODAY && i.status !== 'done').length || ''
+    : v === 'now' && s.running ? clock(s.running.planned ? s.running.planned * 60000 - elapsed(s.running, now) : elapsed(s.running, now)) : '';
+  const logo = html`<${Stack} direction="row" alignItems="center" spacing=${1.25}>
+      <${Box} sx=${{width: 32, height: 32, borderRadius: '4px', bgcolor: 'dojo.main', color: 'dojo.contrastText', display: 'grid', placeItems: 'center'}}>${I('table_rows', {fontSize: 20})}<//>
+      <${Typography} sx=${{fontWeight: 500, fontSize: 20}}>tskmngr<//><//>`;
+  const side = html`<${Box} sx=${{width: 256, p: 1.5, display: 'flex', flexDirection: 'column', minHeight: '100%'}}>
+    ${wide ? html`<${Toolbar}/>` : html`<${Box} sx=${{px: 1.5, py: 1.5}}>${logo}<//>`}
+    <${List} dense>${NAV.map((n, k) => n ? html`<${ListItemButton} key=${n[0]} selected=${view === n[0] && !(n[0] === 'tasks' && pf !== 'all')} onClick=${() => { if (n[0] === 'tasks') setPf('all'); go(n[0]); }} sx=${{mb: .25}}>
+        <${ListItemIcon} sx=${{minWidth: 36, color: n[3]}}>${I(n[2])}<//><${ListItemText} primary=${n[1]} primaryTypographyProps=${{fontWeight: 500, fontSize: 15}}/>
+        <${Typography} variant="body2" color=${n[0] === 'now' ? 'dojo.main' : 'text.secondary'}>${count(n[0]) || ''}<//><//>` : html`<${Box} key=${'g' + k} sx=${{height: 10}}/>`)}<//>
+    <${ListSubheader} disableSticky sx=${{bgcolor: 'transparent', lineHeight: '30px', mt: 1}}>Projects<//>
+    <${List} dense>${projects(vis).filter(p => p.status !== 'done').slice(0, 4).map(p => html`<${ListItemButton} key=${p.id} selected=${view === 'tasks' && pf === p.id} onClick=${() => { setPf(p.id); go('tasks'); }}>
+      <${ListItemIcon} sx=${{minWidth: 36}}><${Box} sx=${{position: 'relative', width: 18, height: 18}}>
+        <${CircularProgress} variant="determinate" value=${100} size=${18} thickness=${6} sx=${{color: 'action.selected', position: 'absolute'}}/>
+        <${CircularProgress} variant="determinate" value=${pct(s, p)} size=${18} thickness=${6} sx=${{color: '#4fc3f7', position: 'absolute'}}/><//><//>
+      <${ListItemText} primary=${p.name} primaryTypographyProps=${{noWrap: true, fontSize: 14}}/><//>`)}
+      ${projects(vis).filter(p => p.status !== 'done').length > 4 ? html`<${ListItemButton} onClick=${() => go('projects')}>
+        <${ListItemIcon} sx=${{minWidth: 36, color: 'text.secondary'}}>${I('more_horiz', {fontSize: 18})}<//>
+        <${ListItemText} primary=${'All ' + projects(vis).filter(p => p.status !== 'done').length + ' projects'} primaryTypographyProps=${{fontSize: 14, color: 'text.secondary'}}/><//>` : null}<//>
+  <//>`;
+  const V = {inbox: Inbox, now: Now, today: Today, upcoming: Upcoming, week: Week, habits: Habits, reminders: Reminders, tasks: Tasks, projects: Projects, logs: Logs, archive: Archive}[view];
+  return html`<${ThemeProvider} theme=${theme}><${CssBaseline}/>
+    <${Box} sx=${{display: 'flex', minHeight: '100vh'}}>
+      ${wide ? html`<${AppBar} position="fixed" elevation=${4} sx=${{zIndex: t => t.zIndex.drawer + 1}}><${Toolbar}>${logo}<${Box} sx=${{flex: 1}}/>
+          ${nextBtn(false)}
+          ${s.running ? html`<${Button} color="dojo" variant="contained" startIcon=${I(s.running.pausedAt ? 'pause' : 'timer')} onClick=${() => go('now')} sx=${{maxWidth: 520, textTransform: 'none'}}>
+            <${Box} component="span" sx=${{fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>${count('now')}<//>
+            ${runName ? html`<${Box} component="span" sx=${{ml: 1.25, pl: 1.25, borderLeft: '1px solid rgba(0,0,0,.3)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>${runName}<//>` : null}<//>` : null}
+          ${s.running ? html`<${Tooltip} title="Pop out the timer"><${IconButton} color="inherit" aria-label="Pop out the timer" onClick=${popout} sx=${{ml: .5}}>${I('picture_in_picture_alt')}<//><//>` : null}
+          ${SB ? html`<${Tooltip} title=${!user ? 'Sign in to sync' : sync.st === 'err' ? 'Sync failed' : sync.st === 'offline' ? 'Offline' : 'Synced'}><${IconButton} color="inherit" aria-label="Sync" onClick=${() => setAcct(true)}>${I(!user ? 'cloud_off' : sync.st === 'busy' ? 'cloud_sync' : sync.st === 'err' || sync.st === 'offline' ? 'cloud_alert' : 'cloud_done')}<//><//>` : null}
+          ${html`<${Tooltip} title="Theme"><${IconButton} color="inherit" aria-label="Theme" onClick=${e => setThemeMenu(e.currentTarget)}>${I(pref === 'auto' ? 'contrast' : pref === 'light' ? 'light_mode' : 'dark_mode')}<//><//>`}<//><//>
+        <${Drawer} variant="permanent" sx=${{width: 256, flexShrink: 0}} PaperProps=${{sx: {width: 256, borderColor: 'divider'}}}>${side}<//>`
+        : html`<${Drawer} open=${navOpen} onClose=${() => setNavOpen(false)}>${side}<//>`}
+      <${Box} component="main" sx=${{flex: 1, minWidth: 0}}>
+        ${wide ? html`<${Toolbar}/>` : html`<${AppBar} position="sticky" elevation=${4}>
+          <${Toolbar}><${IconButton} edge="start" color="inherit" aria-label="Menu" onClick=${() => setNavOpen(true)}>${I('menu')}<//>
+            <${Typography} noWrap sx=${{ml: 1, flex: 1, fontSize: 20, fontWeight: 500}}>${NAV.find(n => n && n[0] === view)[1]}<//>
+            ${s.running ? null : nextBtn(true)}
+            ${s.running ? html`<${Chip} size="small" color="dojo" label=${count('now') + (runName ? '  ' + runName : '')} onClick=${() => go('now')} sx=${{maxWidth: 200}}/>` : null}
+            ${SB ? html`<${Tooltip} title=${!user ? 'Sign in to sync' : sync.st === 'err' ? 'Sync failed' : sync.st === 'offline' ? 'Offline' : 'Synced'}><${IconButton} color="inherit" aria-label="Sync" onClick=${() => setAcct(true)}>${I(!user ? 'cloud_off' : sync.st === 'busy' ? 'cloud_sync' : sync.st === 'err' || sync.st === 'offline' ? 'cloud_alert' : 'cloud_done')}<//><//>` : null}
+          ${html`<${Tooltip} title="Theme"><${IconButton} color="inherit" aria-label="Theme" onClick=${e => setThemeMenu(e.currentTarget)}>${I(pref === 'auto' ? 'contrast' : pref === 'light' ? 'light_mode' : 'dark_mode')}<//><//>`}<//><//>`}
+        <${Box} sx=${{maxWidth: ['week', 'today', 'tasks', 'projects', 'now'].includes(view) ? 1280 : 1080, mx: 'auto', px: {xs: 2, md: 5}, py: {xs: 2.5, md: 4}}}><${V} c=${c}/><//>
+      <//>
+    <//>
+    <${Panel} c=${c}/>
+    <${Account} open=${acct} onClose=${() => setAcct(false)} user=${user} sync=${sync} run=${runSync}/>
+    <${Menu} anchorEl=${themeMenu} open=${!!themeMenu} onClose=${() => setThemeMenu(null)} disableRestoreFocus>
+      ${[['light', 'Light', 'light_mode'], ['dark', 'Dark', 'dark_mode'], ['auto', 'Match system', 'contrast']].map(([v, l, ic]) => html`<${MenuItem} key=${v} selected=${pref === v} onClick=${() => setPref(v)}>
+        ${I(ic, {mr: 1.5, fontSize: 20})}<${Box} sx=${{flex: 1, mr: 3}}>${l}<//>${pref === v ? I('check', {fontSize: 18, color: 'primary.main'}) : null}<//>`)}<//>
+    <${Snackbar} open=${!!undo} autoHideDuration=${8000} onClose=${(e, r) => r !== 'clickaway' && setUndo(null)} message=${undo ? undo.msg : ''}
+      action=${undo && undo.prev ? html`<${Button} color="primary" onClick=${() => { setS(undo.prev); setUndo(null); }}>Undo<//>` : null}/>
+    <${Snackbar} open=${full}><${Alert} severity="warning" variant="filled">Not saved: this browser's storage is full. Remove an image.<//><//>
+  <//>`;
+}
+
+if ('serviceWorker' in navigator && location.protocol === 'https:' && !framed) navigator.serviceWorker.register('sw.js').catch(() => {});
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
+}
+</script>
+</body>
+</html>
